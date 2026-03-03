@@ -33,11 +33,9 @@ class ClientContext:
     outputs_dir: str
     node_manager: NodeManager
     chat_model_key: str
-    vlm_model_key: str = ""
     pexels_api_key: Optional[str] = None
     tts_config: Optional[dict] = None
     llm_client: Optional[LLMClient] = None
-    vlm_client: Optional[LLMClient] = None
     lang: str = "zh"
 
 
@@ -47,7 +45,6 @@ async def build_agent(
     store: ArtifactStore,
     *,
     llm_override: Optional[dict] = None,
-    vlm_override: Optional[dict] = None,
 ):
     def _get(override: Optional[dict], key: str, default: Any) -> Any:
         return (
@@ -69,21 +66,36 @@ async def build_agent(
         temperature=_get(llm_override, "temperature", cfg.llm.temperature),
         max_retries=_get(llm_override, "max_retries", cfg.llm.max_retries),
     )
-    llm = LLMClient(llm_config)
 
-    # 2) Build VLM client
-    vlm_config = LLMConfig(
-        model=_get(vlm_override, "model", cfg.vlm.model),
-        base_url=_norm_url(_get(vlm_override, "base_url", cfg.vlm.base_url)),
-        api_key=_get(vlm_override, "api_key", cfg.vlm.api_key),
-        timeout=_get(vlm_override, "timeout", cfg.vlm.timeout),
-        temperature=_get(vlm_override, "temperature", cfg.vlm.temperature),
-        max_retries=_get(vlm_override, "max_retries", cfg.vlm.max_retries),
+    from llm_client import ImageVideoLLMConfig
+
+    image_config = ImageVideoLLMConfig(
+        model=cfg.image_llm.model,
+        base_url=(
+            _norm_url(cfg.image_llm.base_url)
+            if cfg.image_llm.base_url
+            else llm_config.base_url
+        ),
+        api_key=cfg.image_llm.api_key if cfg.image_llm.api_key else llm_config.api_key,
+        timeout=cfg.image_llm.timeout,
+        max_retries=cfg.image_llm.max_retries,
     )
-    vlm = LLMClient(vlm_config)
+    video_config = ImageVideoLLMConfig(
+        model=cfg.video_llm.model,
+        base_url=(
+            _norm_url(cfg.video_llm.base_url)
+            if cfg.video_llm.base_url
+            else llm_config.base_url
+        ),
+        api_key=cfg.video_llm.api_key if cfg.video_llm.api_key else llm_config.api_key,
+        timeout=cfg.video_llm.timeout,
+        max_retries=cfg.video_llm.max_retries,
+    )
+
+    llm = LLMClient(llm_config, image_config=image_config, video_config=video_config)
 
     # 3) Connect to MCP server and get tools
-    sampling_callback = make_sampling_callback(llm, vlm)
+    sampling_callback = make_sampling_callback(llm)
 
     from mcp.client.streamable_http import streamablehttp_client
     from mcp import ClientSession
@@ -91,60 +103,68 @@ async def build_agent(
     server_url = cfg.local_mcp_server.url
     logger.info(f"[Agent] Connecting to MCP server at {server_url}")
 
-    async with streamablehttp_client(
+    import contextlib
+
+    exit_stack = contextlib.AsyncExitStack()
+
+    http_ctx = streamablehttp_client(
         url=server_url,
         headers={"X-ComicDemo-Session-Id": session_id},
-    ) as (read_stream, write_stream, _):
-        async with ClientSession(
-            read_stream,
-            write_stream,
-            sampling_callback=sampling_callback,
-        ) as mcp_session:
-            await mcp_session.initialize()
+    )
+    read_stream, write_stream, _ = await exit_stack.enter_async_context(http_ctx)
 
-            # List available tools from MCP server
-            tools_result = await mcp_session.list_tools()
-            mcp_tools = tools_result.tools
+    mcp_session = ClientSession(
+        read_stream,
+        write_stream,
+        sampling_callback=sampling_callback,
+    )
+    await exit_stack.enter_async_context(mcp_session)
+    await mcp_session.initialize()
 
-            # Convert MCP tools to ToolDef
-            tool_defs = []
-            for t in mcp_tools:
+    # List available tools from MCP server
+    tools_result = await mcp_session.list_tools()
+    mcp_tools = tools_result.tools
 
-                async def _make_caller(tool_name):
-                    async def caller(**kwargs):
-                        result = await mcp_session.call_tool(tool_name, kwargs)
-                        if result.isError:
-                            raise Exception(f"MCP tool error: {result.content}")
-                        # Extract text content
-                        texts = []
-                        for block in result.content or []:
-                            if hasattr(block, "text"):
-                                texts.append(block.text)
-                        return "\n".join(texts) if texts else ""
+    # Convert MCP tools to ToolDef
+    tool_defs = []
+    for t in mcp_tools:
 
-                    return caller
+        async def _make_caller(tool_name):
+            async def caller(**kwargs):
+                result = await mcp_session.call_tool(tool_name, kwargs)
+                if result.isError:
+                    raise Exception(f"MCP tool error: {result.content}")
+                # Extract text content
+                texts = []
+                for block in result.content or []:
+                    if hasattr(block, "text"):
+                        texts.append(block.text)
+                return "\n".join(texts) if texts else ""
 
-                tool_defs.append(
-                    ToolDef(
-                        name=t.name,
-                        description=t.description or "",
-                        parameters=t.inputSchema
-                        or {"type": "object", "properties": {}},
-                        callable=await _make_caller(t.name),
-                        metadata=getattr(t, "metadata", None) or {},
-                    )
-                )
+            return caller
 
-            node_manager = NodeManager(tool_defs)
-
-            # 4) Build AgentLoop (replaces create_agent)
-            agent = AgentLoop(
-                llm=llm,
-                tools=tool_defs,
-                max_iterations=30,
-                on_tool_start=make_tool_start_hook(),
-                on_tool_end=make_tool_end_hook(),
-                on_tool_error=make_tool_error_hook(),
+        tool_defs.append(
+            ToolDef(
+                name=t.name,
+                description=t.description or "",
+                parameters=t.inputSchema or {"type": "object", "properties": {}},
+                callable=await _make_caller(t.name),
+                metadata=getattr(t, "metadata", None) or {},
             )
+        )
 
-            return agent, node_manager
+    node_manager = NodeManager(tool_defs)
+
+    # 4) Build AgentLoop (replaces create_agent)
+    agent = AgentLoop(
+        llm=llm,
+        tools=tool_defs,
+        max_iterations=30,
+        on_tool_start=make_tool_start_hook(),
+        on_tool_end=make_tool_end_hook(),
+        on_tool_error=make_tool_error_hook(),
+    )
+
+    agent._exit_stack = exit_stack
+
+    return agent, node_manager

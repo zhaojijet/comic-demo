@@ -16,7 +16,7 @@ comic-demo/
 ├── main.py              # FastAPI 服务入口 (REST + WebSocket Gateway)
 ├── config.toml          # 项目配置 (LLM/VLM/MCP/节点)
 ├── requirements.txt     # Python 依赖
-├── run.sh               # 启动脚本
+├── start_dev.sh         # 一键启动脚本 (支持 start/stop/status/restart)
 ├── frontend/            # 前端界面
 │   ├── index.html       # Chat UI 页面
 │   ├── styles.css       # Minimalist Lux 样式
@@ -55,28 +55,38 @@ pip install -r requirements.txt
 
 ### 3. 配置 API Key
 
-编辑 `config.toml`，填入你的 LLM 和 VLM API Key：
+编辑 `config.toml`，填入你的 LLM（DeepSeek）和图/生视频模型（火山引擎）API Key：
 
 ```toml
 [llm]
 model = "deepseek-chat"
 base_url = "https://api.deepseek.com"
-api_key = "你的 API Key"
+api_key = "你的 DeepSeek API Key"
 
-[vlm]
-model = "qwen3-vl-8b-instruct"
-base_url = "你的 VLM 服务地址"
-api_key = "你的 API Key"
+[image_llm]
+model = "doubao-seedream-5-0-260128"
+base_url = "https://ark.cn-beijing.volces.com/api/v3"
+api_key = "你的 火山 Ark API Key"
+
+[video_llm]
+model = "doubao-seedance-1-5-pro-251215"
+base_url = "https://ark.cn-beijing.volces.com/api/v3"
+api_key = "你的 火山 Ark API Key"
 ```
 
 ### 4. 启动服务
 
 ```bash
-# 方式一：使用启动脚本
-chmod +x run.sh
-./run.sh
+# 推荐使用一键启动脚本 (会自动管理后台进程)
+chmod +x start_dev.sh
+./start_dev.sh start
 
-# 方式二：直接运行
+# 其他服务管理命令
+./start_dev.sh status   # 查看运行状态和健康检查
+./start_dev.sh stop     # 停止服务
+./start_dev.sh restart  # 重启服务
+
+# 手动启动 (调试模式)
 export PYTHONPATH=$(pwd)/src:$PYTHONPATH
 ./.venv/bin/python main.py
 ```
@@ -130,5 +140,5 @@ curl -X POST http://localhost:8002/create_comic \
 
 - 创作过程需要调用外部 AI 服务，请确保网络通畅
 - 单次完整创作可能需要数分钟
-- 生成的产物保存在 `.comic_demo/artifacts/` 目录下
+- 生成的产物保存在 `./outputs/` 目录下
 - `resource/bgms/` 可放置背景音乐素材供后期使用

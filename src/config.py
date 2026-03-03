@@ -85,7 +85,8 @@ class ConfigBaseModel(BaseModel):
 class DeveloperConfig(ConfigBaseModel):
     developer_mode: bool = False
     default_llm: str = "deepseek-chat"
-    default_vlm: str = "qwen3-vl-8b-instruct"
+    default_image_llm: str = "seedream-5.0"
+    default_video_llm: str = "seedance-1.5"
     chat_models_config: dict[str, dict[str, Any]] = Field(default_factory=dict)
     print_context: bool = False
 
@@ -112,12 +113,19 @@ class LLMConfig(ConfigBaseModel):
     max_retries: int = 2
 
 
-class VLMConfig(ConfigBaseModel):
+class ImageLLMConfig(ConfigBaseModel):
     model: str
-    base_url: str
-    api_key: str
-    timeout: float = 20.0
-    temperature: Optional[float] = None
+    base_url: str = ""
+    api_key: str = ""
+    timeout: float = 60.0
+    max_retries: int = 2
+
+
+class VideoLLMConfig(ConfigBaseModel):
+    model: str
+    base_url: str = ""
+    api_key: str = ""
+    timeout: float = 120.0
     max_retries: int = 2
 
 
@@ -269,7 +277,12 @@ class Settings(ConfigBaseModel):
     project: ProjectConfig
 
     llm: LLMConfig
-    vlm: VLMConfig
+    image_llm: ImageLLMConfig = Field(
+        default_factory=lambda: ImageLLMConfig(model="seedream-5.0")
+    )
+    video_llm: VideoLLMConfig = Field(
+        default_factory=lambda: VideoLLMConfig(model="seedance-1.5")
+    )
 
     local_mcp_server: MCPConfig
 

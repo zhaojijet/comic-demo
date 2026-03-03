@@ -637,6 +637,34 @@ body {
     margin-top: 8px;
 }
 
+/* ── Test Buttons ───────────────────────────────────────────────────────── */
+.test-actions {
+    display: flex;
+    gap: 1rem;
+    justify-content: center;
+    margin-top: 1.5rem;
+}
+
+.test-action-btn {
+    background: rgba(139, 92, 246, 0.1);
+    color: var(--primary);
+    border: 1px solid rgba(139, 92, 246, 0.2);
+    padding: 0.5rem 1rem;
+    border-radius: 9999px;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.test-action-btn:hover {
+    background: var(--primary);
+    color: white;
+}
+
 /* ── Animations ─────────────────────────────────────────────────────────── */
 @keyframes fadeIn {
     from {

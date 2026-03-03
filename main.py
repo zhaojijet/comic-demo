@@ -138,13 +138,18 @@ async def stream_comic_creation(session_id: str, user_prompt: str):
             },
         )
 
-        # Execute the agent
-        result = await agent.ainvoke(
-            {
-                "input": f"Help me create a comic based on: {user_prompt}",
-                "chat_history": [],
-            }
-        )
+        try:
+            # Execute the agent
+            result = await agent.ainvoke(
+                {
+                    "input": f"Help me create a comic based on: {user_prompt}",
+                    "chat_history": [],
+                }
+            )
+        finally:
+            # Teardown the MCP connection
+            if hasattr(agent, "_exit_stack"):
+                await agent._exit_stack.aclose()
 
         # ── Phase 4: Completion ──
         await session_manager.send_event(
@@ -227,6 +232,88 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 # Run the comic creation pipeline in the background
                 asyncio.create_task(stream_comic_creation(session_id, user_prompt))
+
+            elif msg_type == "test_llm":
+                await session_manager.send_event(
+                    session_id,
+                    {"type": "system", "content": "Testing Text LLM (DeepSeek)..."},
+                )
+                try:
+                    from llm_client import LLMClient
+
+                    client = LLMClient(settings.llm)
+                    resp = await client.chat(
+                        [{"role": "user", "content": "你好，请用一句话自我介绍"}]
+                    )
+                    await session_manager.send_event(
+                        session_id,
+                        {
+                            "type": "complete",
+                            "content": "LLM 测试完成",
+                            "result": f"大模型回复: {resp.get('content')}",
+                        },
+                    )
+                except Exception as e:
+                    await session_manager.send_event(
+                        session_id, {"type": "error", "content": f"LLM Test Error: {e}"}
+                    )
+
+            elif msg_type == "test_image_llm":
+                await session_manager.send_event(
+                    session_id,
+                    {"type": "system", "content": "Testing Image LLM (Seedream)..."},
+                )
+                try:
+                    from llm_client import LLMClient
+
+                    client = LLMClient(settings.image_llm)
+                    urls = await client.generate_image(
+                        "一个赛博朋克机械师角色设定图，半身像"
+                    )
+                    result = (
+                        f"生图成功！图片链接:\n" + "\n".join(urls)
+                        if urls
+                        else "生图失败，返回为空"
+                    )
+                    await session_manager.send_event(
+                        session_id,
+                        {
+                            "type": "complete",
+                            "content": "Image LLM 测试完成",
+                            "result": result,
+                        },
+                    )
+                except Exception as e:
+                    await session_manager.send_event(
+                        session_id,
+                        {"type": "error", "content": f"Image LLM Test Error: {e}"},
+                    )
+
+            elif msg_type == "test_video_llm":
+                await session_manager.send_event(
+                    session_id,
+                    {"type": "system", "content": "Testing Video LLM (Seedance)..."},
+                )
+                try:
+                    from llm_client import LLMClient
+
+                    client = LLMClient(settings.video_llm)
+                    url = await client.generate_video(
+                        "赛博朋克城市里的飞行汽车呼啸而过 --duration 5"
+                    )
+                    await session_manager.send_event(
+                        session_id,
+                        {
+                            "type": "complete",
+                            "content": "Video LLM 测试完成",
+                            "result": f"视频生成成功！链接:\n{url}",
+                        },
+                    )
+                except Exception as e:
+                    await session_manager.send_event(
+                        session_id,
+                        {"type": "error", "content": f"Video LLM Test Error: {e}"},
+                    )
 
     except WebSocketDisconnect:
         logger.info(f"[Gateway] Client disconnected: {session_id}")

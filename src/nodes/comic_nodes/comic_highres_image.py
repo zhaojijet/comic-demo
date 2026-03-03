@@ -42,12 +42,43 @@ class ComicHighresImageNode(BaseNode):
         return {"highres_images": ["default_highres_1.png"]}
 
     async def process(self, node_state: NodeState, inputs: Dict[str, Any]) -> Any:
-        node_state.node_summary.info_for_user(
-            "Comic Hi-Res Image mock process started."
-        )
+        node_state.node_summary.info_for_user("正在为您进行高清上色与高分辨率重绘...")
         images = inputs.get("comic_refine_image", {}).get("refined_images", [])
-        highres_images = [img.replace("refined", "highres") for img in images]
+
+        if not images:
+            return {"highres_images": []}
+
+        import asyncio
+        import os
+        from mcp_custom.sampling_requester import LLMClient
+
+        from pathlib import Path
+
+        save_dir = Path("outputs/comic_highres_image")
+        save_dir.mkdir(parents=True, exist_ok=True)
+
+        async def highres_single_image(image_path: str, idx: int) -> str:
+            prompt = f"请对该底图进行高清上色与高分辨率重绘（Hi-Res Fix），增加环境光影细节材质表现: {image_path}"
+            try:
+                urls = await node_state.llm.generate_image(prompt)
+                url = urls[0] if urls else ""
+                if url:
+                    filename = f"{node_state.session_id}_{node_state.artifact_id}_highres_{idx}.png"
+                    save_path = str(save_dir / filename)
+                    await LLMClient.download_media(url, save_path)
+                    return str(save_path)
+                return ""
+            except Exception as e:
+                node_state.node_summary.warning_for_user(
+                    f"图片高清处理失败 ({image_path}): {e}"
+                )
+                return ""
+
+        # Run highres concurrently for all images
+        tasks = [highres_single_image(img, i) for i, img in enumerate(images)]
+        highres_images = await asyncio.gather(*tasks)
+
         node_state.node_summary.info_for_user(
-            f"Generated {len(highres_images)} Hi-Res images."
+            f"成功生成了 {len([img for img in highres_images if img])} 张高清成品图。"
         )
         return {"highres_images": highres_images}

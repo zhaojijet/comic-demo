@@ -298,7 +298,6 @@ def _build_media_blocks(
 
 def make_sampling_callback(
     llm,  # LLMClient
-    vlm,  # LLMClient
     *,
     resize_edge: int = DEFAULT_RESIZE_EDGE,
     jpeg_quality: int = DEFAULT_JPEG_QUALITY,
@@ -335,9 +334,7 @@ def make_sampling_callback(
 
             # 4. Route to appropriate model
             use_multimodal = bool(media_inputs)
-            model = vlm if use_multimodal else llm
-            if model is None:
-                model = vlm or llm
+            model = llm
             model_name = model.config.model
 
             # 5. Build media blocks

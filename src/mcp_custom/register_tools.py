@@ -4,6 +4,7 @@ from typing import Annotated
 from pydantic import BaseModel, Field
 import inspect
 import traceback
+import uuid
 
 from config import Settings
 from skills.skills_io import dump_skills
@@ -45,13 +46,20 @@ def create_tool_wrapper(node: BaseNode, input_schema: type[BaseModel]):
 
         node_state = NodeState(
             session_id=session_id,
-            artifact_id=params["artifact_id"],
+            artifact_id=params.get(
+                "artifact_id", f"{meta.name}_{uuid.uuid4().hex[:8]}"
+            ),
             lang=params.get("lang", "zh"),
             node_summary=NodeSummary(),
             llm=make_llm(mcp_ctx),
             mcp_ctx=mcp_ctx,
         )
         result = await node(node_state, **params)
+
+        # Ensure result has artifact_id for the frontend
+        if isinstance(result, dict) and "artifact_id" not in result:
+            result["artifact_id"] = node_state.artifact_id
+
         return result
 
     new_params = []

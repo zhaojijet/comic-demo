@@ -237,7 +237,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function handleEvent(event) {
         switch (event.type) {
             case 'connected':
-                renderer.addMessage('system', event.content);
+                console.log("[Gateway] connected: ", event.content);
                 break;
 
             case 'user_message':
@@ -350,6 +350,18 @@ document.addEventListener('DOMContentLoaded', () => {
                 chatInput.value = prompt;
                 updateInputState();
                 chatInput.focus();
+            }
+        });
+    });
+
+    // ── Test Action Buttons ────────────────────────────────────────────
+    document.querySelectorAll('.test-action-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const testType = btn.dataset.test;
+            if (testType && !isProcessing) {
+                isProcessing = true;
+                updateInputState();
+                gateway.send(testType, "");
             }
         });
     });
