@@ -22,8 +22,8 @@ class BaseLLMSampling(Protocol):
         model_preferences: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
         stop_sequences: list[str] | None = None,
-    ) -> str:
-        ...
+    ) -> str: ...
+
 
 @runtime_checkable
 class LLMClient(Protocol):
@@ -40,8 +40,8 @@ class LLMClient(Protocol):
         model_preferences: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
         stop_sequences: list[str] | None = None,
-    ) -> str:
-        ...
+    ) -> str: ...
+
 
 class MCPSampler(BaseLLMSampling):
     def __init__(self, mcp_ctx: Context[ServerSession, object]):
@@ -72,7 +72,7 @@ class MCPSampler(BaseLLMSampling):
             speedPriority=model_preferences.get("speedPriority"),
             intelligencePriority=model_preferences.get("intelligencePriority"),
         )
-    
+
     def _extract_text(self, content: Any) -> str:
         emoji_manager = EmojiManager()
 
@@ -87,23 +87,23 @@ class MCPSampler(BaseLLMSampling):
         if getattr(content, "type", None) == "text":
             return emoji_manager.remove_emoji(content.text.strip())
 
-        
         return emoji_manager.remove_emoji(str(content))
-    
-    async def sampling(self,
-        *, 
-        system_prompt: str | None, 
-        messages: list[SamplingMessage], 
-        temperature: float = 0.3, 
-        top_p: float = 0.9, 
-        max_tokens: int = 4096, 
-        model_preferences: dict[str, Any] | None = None, 
-        metadata: dict[str, Any] | None = None, 
-        stop_sequences: list[str] | None = None
+
+    async def sampling(
+        self,
+        *,
+        system_prompt: str | None,
+        messages: list[SamplingMessage],
+        temperature: float = 0.3,
+        top_p: float = 0.9,
+        max_tokens: int = 4096,
+        model_preferences: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+        stop_sequences: list[str] | None = None,
     ) -> str:
         merged_metadata = dict(metadata or {})
         merged_metadata["top_p"] = top_p
-        
+
         result = await self._mcp_ctx.session.create_message(
             messages=messages,
             max_tokens=max_tokens,
@@ -114,7 +114,8 @@ class MCPSampler(BaseLLMSampling):
             # model_preferences=self._to_mcp_model_preferences(model_preferences),
         )
         return self._extract_text(result.content)
-    
+
+
 class SamplingLLMClient(LLMClient):
     """
     Only differentiate based on presence of media input.
@@ -124,7 +125,8 @@ class SamplingLLMClient(LLMClient):
     def __init__(self, sampler: BaseLLMSampling):
         self._sampler = sampler
 
-    async def complete(self,
+    async def complete(
+        self,
         *,
         system_prompt: str | None,
         user_prompt: str,
@@ -134,8 +136,8 @@ class SamplingLLMClient(LLMClient):
         max_tokens: int = 2048,
         model_preferences: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
-        stop_sequences: list[str] | None = None
-    )-> str:
+        stop_sequences: list[str] | None = None,
+    ) -> str:
         messages = [
             SamplingMessage(
                 role="user",
@@ -146,7 +148,9 @@ class SamplingLLMClient(LLMClient):
         merged_metadata = dict(metadata or {})
         merged_metadata["modality"] = "multimodal" if media else "text"
         if media:
-            merged_metadata["media"] = media # Critical: Pass media paths and timestamps through transparently
+            merged_metadata["media"] = (
+                media  # Critical: Pass media paths and timestamps through transparently
+            )
 
         return await self._sampler.sampling(
             system_prompt=system_prompt,
@@ -159,7 +163,41 @@ class SamplingLLMClient(LLMClient):
             stop_sequences=stop_sequences,
         )
 
+    async def generate_image(self, prompt: str) -> list[str]:
+        """Request image generation via MCP sampling."""
+        messages = [
+            SamplingMessage(
+                role="user",
+                content=TextContent(type="text", text=prompt),
+            )
+        ]
+        result_str = await self._sampler.sampling(
+            system_prompt=None,
+            messages=messages,
+            metadata={"modality": "image_gen"},
+        )
+        # Expecting a newline-separated list of URLs or paths
+        return [s.strip() for s in result_str.split("\n") if s.strip()]
+
+    async def generate_video(self, prompt: str, image_url: str | None = None) -> str:
+        """Request video generation via MCP sampling."""
+        messages = [
+            SamplingMessage(
+                role="user",
+                content=TextContent(type="text", text=prompt),
+            )
+        ]
+        metadata = {"modality": "video_gen"}
+        if image_url:
+            metadata["media"] = [{"url": image_url}]
+
+        return await self._sampler.sampling(
+            system_prompt=None,
+            messages=messages,
+            metadata=metadata,
+        )
+
+
 def make_llm(mcp_ctx: Context[ServerSession, object]) -> LLMClient:
     # Tools can directly call llm.complete() via llm = make_llm(ctx)
     return SamplingLLMClient(MCPSampler(mcp_ctx))
-    

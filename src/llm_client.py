@@ -94,7 +94,7 @@ class LLMClient:
             The assistant's message dict: {"role": "assistant", "content": "..."}
         """
         params = {
-            "model": self.config.model,
+            "model": kwargs.pop("model_override", self.config.model),
             "messages": messages,
             "temperature": (
                 temperature if temperature is not None else self.config.temperature
@@ -186,6 +186,7 @@ class LLMClient:
         size: str = "2K",
         watermark: bool = True,
         stream: bool = False,
+        model_override: Optional[str] = None,
     ) -> list[str] | Any:
         """
         Generate images via Volcengine Ark SDK (or standard OpenAI).
@@ -206,7 +207,7 @@ class LLMClient:
             )
 
             resp = await self.image_client.images.generate(
-                model=self.image_config.model,
+                model=model_override or self.image_config.model,
                 prompt=prompt,
                 image=img_arg,
                 sequential_image_generation="auto" if is_batch else "disabled",
@@ -235,7 +236,7 @@ class LLMClient:
             )
 
             resp = await self.image_client.images.generate(
-                model=self.image_config.model,
+                model=model_override or self.image_config.model,
                 prompt=prompt,
                 size=size,
                 extra_body=extra_body,
@@ -283,6 +284,7 @@ class LLMClient:
         prompt: str,
         *,
         reference_image: Optional[str] = None,
+        model_override: Optional[str] = None,
     ) -> str:
         """
         Generate video via Volcengine Ark SDK (or others if supported).
@@ -305,7 +307,7 @@ class LLMClient:
                 )
 
             resp = await self.video_client.content_generation.tasks.create(
-                model=self.video_config.model, content=content
+                model=model_override or self.video_config.model, content=content
             )
 
             task_id = resp.id
@@ -330,18 +332,6 @@ class LLMClient:
             raise NotImplementedError(
                 "Video generation is currently only implemented for Volcengine Ark SDK."
             )
-        """Download an image from a URL to a local file asynchronously."""
-        import httpx
-        import aiofiles
-        import os
-
-        os.makedirs(os.path.dirname(os.path.abspath(save_path)), exist_ok=True)
-        async with httpx.AsyncClient() as client:
-            response = await client.get(url, timeout=60.0)
-            response.raise_for_status()
-            async with aiofiles.open(save_path, "wb") as f:
-                await f.write(response.content)
-        return save_path
 
 
 def create_llm_client(config: LLMConfig) -> LLMClient:

@@ -25,9 +25,9 @@ class ComicImage2VideoNode(BaseNode):
         description="Convert highres images to video clips. This is the '图生视频' phase.",
         node_id="comic_image2video",
         node_kind="comic_image2video",
-        require_prior_kind=["comic_highres_image"],
-        default_require_prior_kind=["comic_highres_image"],
-        next_available_node=["comic_post_production"],  # Bridge to Post-Production
+        require_prior_kind=["comic_storyboard_image"],
+        default_require_prior_kind=["comic_storyboard_image"],
+        next_available_node=[],  # Final node
     )
 
     input_schema = ComicImage2VideoInput

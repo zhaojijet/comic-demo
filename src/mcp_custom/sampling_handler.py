@@ -390,7 +390,27 @@ def make_sampling_callback(
                     messages.append({"role": "user", "content": text})
 
             # 7. Call model via LLMClient
-            if use_multimodal:
+            modality = metadata.get("modality", "text")
+
+            # Simple text extraction for modality-specific prompts
+            mcp_user_text = ""
+            for m in mcp_messages:
+                if getattr(m, "role", "") == "user":
+                    mcp_user_text = _extract_text_from_mcp_content(
+                        getattr(m, "content", None)
+                    )
+
+            if modality == "image_gen":
+                urls = await model.generate_image(mcp_user_text)
+                text_out = "\n".join(urls)
+            elif modality == "video_gen":
+                ref_image = None
+                if media_inputs:
+                    ref_image = media_inputs[0].get("url")
+                text_out = await model.generate_video(
+                    prompt=mcp_user_text, reference_image=ref_image
+                )
+            elif use_multimodal:
                 text_out = await model.chat_with_vision(
                     messages,
                     temperature=temperature,

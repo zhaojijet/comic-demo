@@ -7,6 +7,7 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Optional, Dict, Any
+from datetime import datetime
 
 # Ensure we can import from local src
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -47,6 +48,41 @@ class ComicRequest(BaseModel):
 # ── WebSocket Gateway (inspired by openclaw) ──────────────────────────────────
 
 
+class HistoryStore:
+    """Handles persistence of session history to a JSON file."""
+
+    def __init__(self, data_dir: str):
+        self.data_path = os.path.join(data_dir, "history.json")
+        os.makedirs(data_dir, exist_ok=True)
+        self.history = self.load()
+
+    def load(self):
+        if os.path.exists(self.data_path):
+            try:
+                with open(self.data_path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception as e:
+                logger.error(f"[HistoryStore] Error loading history: {e}")
+        return []
+
+    def save(self):
+        try:
+            with open(self.data_path, "w", encoding="utf-8") as f:
+                json.dump(self.history, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.error(f"[HistoryStore] Error saving history: {e}")
+
+    def add_session(self, session):
+        self.history.append(session)
+        self.save()
+
+    def get_all(self):
+        return self.history
+
+
+history_store = HistoryStore(os.path.join(ROOT_DIR, "data"))
+
+
 class SessionManager:
     """Manages active WebSocket sessions, inspired by openclaw's session model."""
 
@@ -57,6 +93,10 @@ class SessionManager:
         await websocket.accept()
         self.active_sessions[session_id] = websocket
         logger.info(f"[Gateway] Session connected: {session_id}")
+        # Send history on connection
+        await self.send_event(
+            session_id, {"type": "history", "content": history_store.get_all()}
+        )
 
     def disconnect(self, session_id: str):
         self.active_sessions.pop(session_id, None)
@@ -122,11 +162,7 @@ async def stream_comic_creation(session_id: str, user_prompt: str):
             "ComicCharacterNode",
             "ComicStoryboardNode",
             "ComicStoryboardImageNode",
-            "ComicRefineImageNode",
-            "ComicHighresImageNode",
             "ComicImage2VideoNode",
-            "ComicPostProductionNode",
-            "ComicSuperResolutionNode",
         ]
 
         await session_manager.send_event(
@@ -174,6 +210,99 @@ async def stream_comic_creation(session_id: str, user_prompt: str):
                 "content": f"❌ 创作过程中发生错误: {str(e)}",
             },
         )
+
+
+async def execute_single_node(session_id: str, node_key: str):
+    """单独执行一个工作流节点并返回结果到前端。"""
+    from agent import build_agent
+    from core.config import settings
+
+    node_mapping = {
+        "script": "ComicScriptNode",
+        "style": "ComicStyleNode",
+        "character": "ComicCharacterNode",
+        "storyboard": "ComicStoryboardNode",
+        "storyboard_image": "ComicStoryboardImageNode",
+        "image2video": "ComicImage2VideoNode",
+    }
+
+    tool_name = node_mapping.get(node_key)
+    if not tool_name:
+        await session_manager.send_event(
+            session_id, {"type": "error", "content": f"未知节点类型: {node_key}"}
+        )
+        return
+
+    await session_manager.send_event(
+        session_id,
+        {
+            "type": "node_start",
+            "node": tool_name,
+            "content": f"开始单节点运行: {tool_name}...",
+        },
+    )
+
+    try:
+        # 正确传参给 build_agent(cfg, session_id, store)
+        from storage.agent_memory import ArtifactStore
+
+        store = ArtifactStore(
+            session_id=session_id, artifacts_dir=settings.project.outputs_dir
+        )
+
+        agent, _ = await build_agent(settings, session_id, store)
+
+        tool = None
+        for t in agent.tools:
+            if t.name == tool_name:
+                tool = t
+                break
+
+        if not tool or not tool.callable:
+            raise ValueError(f"Agent tool {tool_name} 未正确注册或缺少可调用对象。")
+
+        # 运行节点
+        result = (
+            await tool.caller()
+        )  # AgentLoop's ToolDef uses caller for encapsulated call
+
+        # 处理结果中的媒体路径以便前端访问
+        if isinstance(result, str) and result.startswith("outputs/"):
+            result_display = (
+                f"IMAGE_PATH:{result}"
+                if result.endswith((".png", ".jpg", ".jpeg"))
+                else f"VIDEO_PATH:{result}"
+            )
+        else:
+            result_display = str(result)
+
+        await session_manager.send_event(
+            session_id,
+            {
+                "type": "node_complete",
+                "node": tool_name,
+                "content": f"节点 {tool_name} 运行完毕。",
+            },
+        )
+        await session_manager.send_event(
+            session_id,
+            {
+                "type": "complete",
+                "content": f"✅ {tool_name} 执行成功！结果如下:",
+                "result": result_display,
+            },
+        )
+    except Exception as e:
+        logger.error(f"[Gateway] Node Execution Error for {tool_name}: {e}")
+        import traceback
+
+        logger.error(traceback.format_exc())
+        await session_manager.send_event(
+            session_id, {"type": "error", "content": f"❌ 执行异常: {str(e)}"}
+        )
+    finally:
+        if "agent" in locals() and hasattr(agent, "_exit_stack"):
+            await agent._exit_stack.aclose()
 
 
 @app.websocket("/ws")
@@ -233,87 +362,177 @@ async def websocket_endpoint(websocket: WebSocket):
                 # Run the comic creation pipeline in the background
                 asyncio.create_task(stream_comic_creation(session_id, user_prompt))
 
-            elif msg_type == "test_llm":
+            if msg_type in ("test_llm", "test_image_llm", "test_video_llm"):
+                # Parse JSON string from frontend if possible
+                content_obj = message.get("content", "")
+                user_content = ""
+                frontend_model = None
+
+                if isinstance(content_obj, str) and content_obj.startswith("{"):
+                    try:
+                        content_dict = json.loads(content_obj)
+                        user_content = content_dict.get("text", "").strip()
+                        frontend_model = content_dict.get("model", "")
+                    except Exception:
+                        user_content = content_obj.strip()
+                else:
+                    user_content = str(content_obj).strip()
+
+            if msg_type == "test_llm":
+                user_content = user_content or "你好，请用一句话自我介绍"
                 await session_manager.send_event(
                     session_id,
-                    {"type": "system", "content": "Testing Text LLM (DeepSeek)..."},
+                    {"type": "system", "content": "正在调用文本大模型..."},
                 )
                 try:
                     from llm_client import LLMClient
 
                     client = LLMClient(settings.llm)
+
+                    model_override = None
+                    if frontend_model and "deepseek" in frontend_model.lower():
+                        model_override = "deepseek-chat"
+
                     resp = await client.chat(
-                        [{"role": "user", "content": "你好，请用一句话自我介绍"}]
+                        [{"role": "user", "content": user_content}],
+                        model_override=model_override,
                     )
                     await session_manager.send_event(
                         session_id,
                         {
                             "type": "complete",
-                            "content": "LLM 测试完成",
-                            "result": f"大模型回复: {resp.get('content')}",
+                            "input": user_content,
+                            "content": "文本 LLM 回复",
+                            "result": resp.get("content", str(resp)),
                         },
+                    )
+                    history_store.add_session(
+                        {
+                            "id": f"srv_{int(asyncio.get_event_loop().time() * 1000)}",
+                            "timestamp": datetime.now().isoformat(),
+                            "mode": "llm",
+                            "input": user_content,
+                            "output": resp.get("content", str(resp)),
+                        }
                     )
                 except Exception as e:
                     await session_manager.send_event(
-                        session_id, {"type": "error", "content": f"LLM Test Error: {e}"}
+                        session_id, {"type": "error", "content": f"LLM 调用失败: {e}"}
                     )
 
             elif msg_type == "test_image_llm":
+                user_content = user_content or "一个赛博朋克机械师角色设定图，半身像"
                 await session_manager.send_event(
                     session_id,
-                    {"type": "system", "content": "Testing Image LLM (Seedream)..."},
+                    {"type": "system", "content": "正在调用图片生成模型..."},
                 )
                 try:
                     from llm_client import LLMClient
 
                     client = LLMClient(settings.image_llm)
+
+                    model_override = None
+                    if frontend_model and "seedream" in frontend_model.lower():
+                        model_override = "doubao-seedream-5-0-260128"
+
                     urls = await client.generate_image(
-                        "一个赛博朋克机械师角色设定图，半身像"
+                        user_content, model_override=model_override
                     )
-                    result = (
-                        f"生图成功！图片链接:\n" + "\n".join(urls)
-                        if urls
-                        else "生图失败，返回为空"
-                    )
-                    await session_manager.send_event(
-                        session_id,
-                        {
+                    if urls:
+                        event = {
                             "type": "complete",
-                            "content": "Image LLM 测试完成",
-                            "result": result,
-                        },
-                    )
+                            "input": user_content,
+                            "content": "图片生成完成",
+                            "result": "生图成功！",
+                            "media_type": "image",
+                            "media_urls": urls,
+                        }
+                        await session_manager.send_event(session_id, event)
+                        history_store.add_session(
+                            {
+                                "id": f"srv_{int(asyncio.get_event_loop().time() * 1000)}",
+                                "timestamp": datetime.now().isoformat(),
+                                "mode": "image-llm",
+                                "input": user_content,
+                                "output": "图片生成完成",
+                                "mediaType": "image",
+                                "mediaUrl": urls[0] if urls else None,
+                            }
+                        )
+                    else:
+                        await session_manager.send_event(
+                            session_id,
+                            {
+                                "type": "complete",
+                                "content": "图片生成完成",
+                                "result": "生图失败，返回为空",
+                            },
+                        )
                 except Exception as e:
                     await session_manager.send_event(
                         session_id,
-                        {"type": "error", "content": f"Image LLM Test Error: {e}"},
+                        {"type": "error", "content": f"图片生成失败: {e}"},
                     )
 
             elif msg_type == "test_video_llm":
+                user_content = (
+                    user_content or "赛博朋克城市里的飞行汽车呼啸而过 --duration 5"
+                )
                 await session_manager.send_event(
                     session_id,
-                    {"type": "system", "content": "Testing Video LLM (Seedance)..."},
+                    {"type": "system", "content": "正在调用视频生成模型..."},
                 )
                 try:
                     from llm_client import LLMClient
 
                     client = LLMClient(settings.video_llm)
+
+                    model_override = None
+                    if frontend_model:
+                        if (
+                            "1.0-pro-fast" in frontend_model
+                            or "1.0profast" in frontend_model.lower()
+                        ):
+                            model_override = "doubao-seedance-1-0-pro-fast-251015"
+                        elif (
+                            "1.5-pro" in frontend_model
+                            or "1.5pro" in frontend_model.lower()
+                        ):
+                            model_override = "doubao-seedance-1-5-pro-251215"
+
                     url = await client.generate_video(
-                        "赛博朋克城市里的飞行汽车呼啸而过 --duration 5"
+                        user_content, model_override=model_override
                     )
-                    await session_manager.send_event(
-                        session_id,
+                    event = {
+                        "type": "complete",
+                        "input": user_content,
+                        "content": "视频生成完成",
+                        "result": "视频生成成功！",
+                        "media_type": "video",
+                        "media_urls": [url] if url else [],
+                    }
+                    await session_manager.send_event(session_id, event)
+                    history_store.add_session(
                         {
-                            "type": "complete",
-                            "content": "Video LLM 测试完成",
-                            "result": f"视频生成成功！链接:\n{url}",
-                        },
+                            "id": f"srv_{int(asyncio.get_event_loop().time() * 1000)}",
+                            "timestamp": datetime.now().isoformat(),
+                            "mode": "video-llm",
+                            "input": user_content,
+                            "output": "视频生成完成",
+                            "mediaType": "video",
+                            "mediaUrl": url,
+                        }
                     )
                 except Exception as e:
                     await session_manager.send_event(
                         session_id,
-                        {"type": "error", "content": f"Video LLM Test Error: {e}"},
+                        {"type": "error", "content": f"视频生成失败: {e}"},
                     )
+
+            elif msg_type.startswith("run_node_"):
+                logger.info(f"[Gateway] Incoming test command: {msg_type}")
+                node_key = msg_type.replace("run_node_", "")
+                asyncio.create_task(execute_single_node(session_id, node_key))
 
     except WebSocketDisconnect:
         logger.info(f"[Gateway] Client disconnected: {session_id}")
@@ -362,6 +581,10 @@ async def create_comic(request: ComicRequest):
 frontend_path = os.path.join(ROOT_DIR, "frontend")
 if os.path.exists(frontend_path):
     app.mount("/web", StaticFiles(directory=frontend_path, html=True), name="frontend")
+
+outputs_path = os.path.join(ROOT_DIR, "outputs")
+if os.path.exists(outputs_path):
+    app.mount("/outputs", StaticFiles(directory=outputs_path), name="outputs")
 
 
 if __name__ == "__main__":

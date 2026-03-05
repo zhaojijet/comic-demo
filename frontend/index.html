@@ -16,124 +16,270 @@
 
 <body>
 
-    <!-- Sidebar Navigation -->
+    <!-- ═══ Sidebar Navigation ═══ -->
     <nav class="sidebar" id="sidebar">
         <div class="logo">
-            <i class="fas fa-film"></i>
+            <svg viewBox="0 0 32 32" width="28" height="28" fill="none">
+                <polygon points="16,2 28,28 4,28" fill="url(#logoGrad)" />
+                <defs>
+                    <linearGradient id="logoGrad" x1="0" y1="0" x2="1" y2="1">
+                        <stop offset="0%" stop-color="#38bdf8" />
+                        <stop offset="100%" stop-color="#818cf8" />
+                    </linearGradient>
+                </defs>
+            </svg>
         </div>
-        <div class="nav-item active" data-view="chat">
-            <i class="fas fa-comments"></i>
-            <span>对话</span>
+        <div class="nav-item active" data-view="home" id="navHome">
+            <i class="fas fa-home"></i>
+            <span>首页</span>
         </div>
-        <div class="nav-item" data-view="storyboard">
-            <i class="fas fa-layer-group"></i>
-            <span>分镜</span>
+        <div class="nav-item" data-view="gen" id="navGen">
+            <i class="fas fa-wand-magic-sparkles"></i>
+            <span>生成</span>
         </div>
-        <div class="nav-item" data-view="gallery">
-            <i class="fas fa-images"></i>
-            <span>作品库</span>
-        </div>
-        <div class="sidebar-spacer"></div>
-        <div class="nav-item" data-view="settings">
-            <i class="fas fa-cog"></i>
-            <span>设置</span>
+        <div class="nav-item" data-view="assets" id="navAssets">
+            <i class="fas fa-folder-open"></i>
+            <span>资产</span>
         </div>
     </nav>
 
-    <!-- Main Chat Area -->
+    <!-- ═══ Main Content Area ═══ -->
     <main class="main-content">
 
-        <!-- Top Bar -->
-        <header class="top-bar">
-            <div class="top-bar-left">
-                <h1 class="app-title">Comic Demo</h1>
-                <span class="connection-badge" id="connectionBadge">
-                    <span class="status-dot"></span>
-                    <span class="status-text">未连接</span>
-                </span>
-            </div>
-            <div class="top-bar-right">
-                <button class="icon-btn" id="newChatBtn" title="新对话">
-                    <i class="fas fa-plus"></i>
-                </button>
-            </div>
-        </header>
+        <!-- ── VIEW: Home (首页) ── -->
+        <div id="home-view" class="view-container">
 
-        <!-- Chat Messages Container -->
-        <div class="chat-container" id="chatContainer">
-
-            <!-- Welcome Message (shown when chat is empty) -->
+            <!-- Welcome Screen (hidden after first message) -->
             <div class="welcome-screen" id="welcomeScreen">
-                <div class="welcome-icon">
-                    <i class="fas fa-wand-magic-sparkles"></i>
-                </div>
-                <h2>欢迎使用 Comic Demo</h2>
-                <p>AI 驱动的漫剧创作代理，从剧本到视频一站式完成。</p>
+                <h1 class="welcome-title">开启你的 <span class="gradient-text">Agent 模式</span> ✨ 召唤神龙！</h1>
+            </div>
 
-                <div class="quick-actions">
-                    <button class="quick-action-btn" data-prompt="帮我创作一个赛博朋克风格的短篇漫画，主角是一个机械师">
-                        <i class="fas fa-robot"></i>
-                        <span>赛博朋克漫画</span>
-                    </button>
-                    <button class="quick-action-btn" data-prompt="创作一个古风武侠漫剧，包含3个主要场景和2个角色">
-                        <i class="fas fa-yin-yang"></i>
-                        <span>古风武侠漫剧</span>
-                    </button>
-                    <button class="quick-action-btn" data-prompt="设计一个校园爱情故事的漫画分镜，温馨治愈风格">
-                        <i class="fas fa-heart"></i>
-                        <span>校园爱情故事</span>
-                    </button>
-                    <button class="quick-action-btn" data-prompt="创作一个太空探险主题的科幻漫剧视频">
-                        <i class="fas fa-rocket"></i>
-                        <span>太空探险科幻</span>
-                    </button>
-                </div>
+            <!-- Chat Messages Container -->
+            <div class="chat-area" id="chatArea">
+                <!-- Chat messages will be appended here by JS -->
+                <div class="chat-messages" id="chatContainer"></div>
+            </div>
 
-                <div class="test-actions"
-                    style="margin-top: 1.5rem; display: flex; gap: 1rem; justify-content: center;">
-                    <button class="test-action-btn" data-test="test_llm" title="测试 DeepSeek LLM">
-                        <i class="fas fa-brain"></i> 测试 LLM
-                    </button>
-                    <button class="test-action-btn" data-test="test_image_llm" title="测试 Seedream 生图">
-                        <i class="fas fa-image"></i> 测试 Image LLM
-                    </button>
-                    <button class="test-action-btn" data-test="test_video_llm" title="测试 Seedance 生视频">
-                        <i class="fas fa-video"></i> 测试 Video LLM
-                    </button>
-                </div>
+            <!-- Input Bar -->
+            <div class="input-bar" id="inputBar">
+                <div class="input-wrapper">
+                    <!-- Image reference upload area (video mode only) -->
+                    <div class="frame-upload-area hidden" id="frameUploadArea">
+                        <div class="frame-upload-card" id="firstFrameCard">
+                            <i class="fas fa-plus"></i>
+                            <span>首帧</span>
+                        </div>
+                        <div class="frame-upload-divider">
+                            <i class="fas fa-arrows-alt-h"></i>
+                        </div>
+                        <div class="frame-upload-card" id="lastFrameCard">
+                            <i class="fas fa-plus"></i>
+                            <span>尾帧</span>
+                        </div>
+                    </div>
 
-                <!-- Pipeline Info -->
-                <div class="pipeline-info">
-                    <h3>创作流水线</h3>
-                    <div class="pipeline-nodes">
-                        <div class="pipeline-node"><i class="fas fa-scroll"></i><span>剧本</span></div>
-                        <div class="pipeline-arrow"><i class="fas fa-chevron-right"></i></div>
-                        <div class="pipeline-node"><i class="fas fa-palette"></i><span>风格</span></div>
-                        <div class="pipeline-arrow"><i class="fas fa-chevron-right"></i></div>
-                        <div class="pipeline-node"><i class="fas fa-user-astronaut"></i><span>角色</span></div>
-                        <div class="pipeline-arrow"><i class="fas fa-chevron-right"></i></div>
-                        <div class="pipeline-node"><i class="fas fa-th-large"></i><span>分镜</span></div>
-                        <div class="pipeline-arrow"><i class="fas fa-chevron-right"></i></div>
-                        <div class="pipeline-node"><i class="fas fa-image"></i><span>生图</span></div>
-                        <div class="pipeline-arrow"><i class="fas fa-chevron-right"></i></div>
-                        <div class="pipeline-node"><i class="fas fa-video"></i><span>视频</span></div>
+                    <textarea id="chatInput" placeholder="描述你想生成的剧本" rows="5" autocomplete="off"></textarea>
+
+                    <div class="input-inner-bottom">
+                        <!-- Mode Dropdown (always visible) -->
+                        <div class="mode-dropdown-wrapper" id="modeDropdownWrapper">
+                            <button class="mode-dropdown-trigger" id="modeDropdownTrigger">
+                                <i class="fas fa-bolt" id="modeIcon"></i>
+                                <span id="modeLabel">文本输入</span>
+                                <i class="fas fa-chevron-down chevron-icon" id="modeChevron"></i>
+                            </button>
+                            <div class="mode-dropdown-menu" id="modeDropdownMenu">
+                                <div class="mode-dropdown-header">创作类型</div>
+                                <div class="mode-dropdown-item active" data-mode="llm" id="modeLLM">
+                                    <i class="fas fa-comment-dots"></i>
+                                    <span>文本输入</span>
+                                    <span class="mode-model-name">deepseekv3.2</span>
+                                    <i class="fas fa-check check-icon"></i>
+                                </div>
+                                <div class="mode-dropdown-item" data-mode="image-llm" id="modeImageLLM">
+                                    <i class="fas fa-image"></i>
+                                    <span>图片生成</span>
+                                    <span class="mode-model-name">seedream5.0-lite</span>
+                                    <i class="fas fa-check check-icon"></i>
+                                </div>
+                                <div class="mode-dropdown-item" data-mode="video-llm" id="modeVideoLLM">
+                                    <i class="fas fa-video"></i>
+                                    <span>视频生成</span>
+                                    <span class="mode-model-name">seedance</span>
+                                    <i class="fas fa-check check-icon"></i>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- ══ Video-specific controls (shown only in video mode) ══ -->
+                        <div class="video-controls hidden" id="videoControls">
+                            <!-- Model Selector -->
+                            <div class="mini-dropdown-wrapper" id="modelDropdownWrapper">
+                                <button class="mini-dropdown-trigger" id="modelDropdownTrigger">
+                                    <i class="fas fa-cube"></i>
+                                    <span id="modelLabel">Seedance 1.5 Pro</span>
+                                </button>
+                                <div class="mini-dropdown-menu" id="modelDropdownMenu">
+                                    <div class="mini-dropdown-header">选择模型</div>
+                                    <div class="mini-dropdown-item active" data-value="seedance-1.5-pro">
+                                        <span class="model-name">Seedance 1.5 Pro</span>
+                                        <span class="model-desc">高质量</span>
+                                        <i class="fas fa-check check-icon"></i>
+                                    </div>
+                                    <div class="mini-dropdown-item" data-value="seedance-1.0-pro-fast">
+                                        <span class="model-name">Seedance 1.0 Pro Fast</span>
+                                        <span class="model-desc">高性价比</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Reference Mode Selector -->
+                            <div class="mini-dropdown-wrapper" id="refModeDropdownWrapper">
+                                <button class="mini-dropdown-trigger" id="refModeDropdownTrigger">
+                                    <i class="fas fa-th-large"></i>
+                                    <span id="refModeLabel">首尾帧</span>
+                                    <i class="fas fa-chevron-down chevron-icon"></i>
+                                </button>
+                                <div class="mini-dropdown-menu" id="refModeDropdownMenu">
+                                    <div class="mini-dropdown-item" data-value="all-ref">
+                                        <i class="fas fa-magic"></i>
+                                        <span>全能参考</span>
+                                        <span class="model-tag new-tag">New</span>
+                                    </div>
+                                    <div class="mini-dropdown-item active" data-value="first-last">
+                                        <i class="fas fa-th-large"></i>
+                                        <span>首尾帧</span>
+                                        <i class="fas fa-check check-icon"></i>
+                                    </div>
+                                    <div class="mini-dropdown-item" data-value="multi-frame">
+                                        <i class="fas fa-film"></i>
+                                        <span>智能多帧</span>
+                                    </div>
+                                    <div class="mini-dropdown-item" data-value="subject-ref">
+                                        <i class="fas fa-crosshairs"></i>
+                                        <span>主体参考</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Aspect Ratio + Resolution -->
+                            <div class="mini-dropdown-wrapper" id="ratioDropdownWrapper">
+                                <button class="mini-dropdown-trigger" id="ratioDropdownTrigger">
+                                    <i class="far fa-square"></i>
+                                    <span id="ratioLabel">16:9</span>
+                                    <span id="resolutionLabel">720P</span>
+                                </button>
+                                <div class="mini-dropdown-menu ratio-menu" id="ratioDropdownMenu">
+                                    <div class="mini-dropdown-header">选择比例</div>
+                                    <div class="ratio-grid">
+                                        <div class="ratio-option" data-ratio="21:9">
+                                            <div class="ratio-icon ultra-wide"></div><span>21:9</span>
+                                        </div>
+                                        <div class="ratio-option active" data-ratio="16:9">
+                                            <div class="ratio-icon wide"></div><span>16:9</span>
+                                        </div>
+                                        <div class="ratio-option" data-ratio="4:3">
+                                            <div class="ratio-icon standard"></div><span>4:3</span>
+                                        </div>
+                                        <div class="ratio-option" data-ratio="1:1">
+                                            <div class="ratio-icon square"></div><span>1:1</span>
+                                        </div>
+                                        <div class="ratio-option" data-ratio="3:4">
+                                            <div class="ratio-icon portrait"></div><span>3:4</span>
+                                        </div>
+                                        <div class="ratio-option" data-ratio="9:16">
+                                            <div class="ratio-icon tall"></div><span>9:16</span>
+                                        </div>
+                                    </div>
+                                    <div class="mini-dropdown-header">选择分辨率</div>
+                                    <div class="resolution-grid">
+                                        <div class="resolution-option active" data-res="720P">720P</div>
+                                        <div class="resolution-option" data-res="1080P">1080P <span
+                                                class="model-tag pro-tag">✨</span></div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Duration Selector -->
+                            <div class="mini-dropdown-wrapper" id="durationDropdownWrapper">
+                                <button class="mini-dropdown-trigger" id="durationDropdownTrigger">
+                                    <i class="far fa-clock"></i>
+                                    <span id="durationLabel">5s</span>
+                                </button>
+                                <div class="mini-dropdown-menu" id="durationDropdownMenu">
+                                    <div class="mini-dropdown-header">选择视频生成时长</div>
+                                    <div class="mini-dropdown-item active" data-value="5">
+                                        <i class="far fa-clock"></i>
+                                        <span>5s</span>
+                                        <i class="fas fa-check check-icon"></i>
+                                    </div>
+                                    <div class="mini-dropdown-item" data-value="10">
+                                        <i class="far fa-clock"></i>
+                                        <span>10s</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <button id="sendBtn" class="send-btn" disabled>
+                            <i class="fas fa-arrow-up"></i>
+                        </button>
                     </div>
                 </div>
+                <div class="input-footer-text">
+                    Comic Demo 基于 AI 代理，创作结果可能需要数分钟
+                </div>
             </div>
-
-            <!-- Messages will be appended here by JS -->
         </div>
 
-        <!-- Input Bar (always at bottom) -->
-        <div class="input-bar">
-            <div class="input-wrapper">
-                <textarea id="chatInput" placeholder="描述你的漫剧构思..." rows="1" autocomplete="off"></textarea>
-                <button id="sendBtn" class="send-btn" disabled>
-                    <i class="fas fa-arrow-up"></i>
-                </button>
+        <!-- ── VIEW: Generate (生成页) ── -->
+        <div id="gen-view" class="view-container hidden">
+            <header class="view-header">
+                <h2>生成记录</h2>
+                <div class="view-header-right">
+                    <div class="search-box">
+                        <i class="fas fa-search"></i>
+                        <input type="text" id="genSearchInput" placeholder="搜索记录...">
+                    </div>
+                    <select id="genSortSelect" class="sort-select">
+                        <option value="desc">最新优先</option>
+                        <option value="asc">最早优先</option>
+                    </select>
+                </div>
+            </header>
+            <div class="timeline-scroll" id="genTimelineScroll">
+                <div class="timeline-container" id="genTimeline">
+                    <!-- Timeline items rendered by JS -->
+                </div>
+                <div class="empty-state" id="genEmptyState">
+                    <i class="fas fa-clock-rotate-left"></i>
+                    <p>暂无生成记录</p>
+                    <span>在首页发送消息后，所有 Session 记录将在此展示</span>
+                </div>
             </div>
-            <div class="input-footer-text">
-                Comic Demo 基于 AI 代理，创作结果可能需要数分钟
+        </div>
+
+        <!-- ── VIEW: Assets (资产页) ── -->
+        <div id="assets-view" class="view-container hidden">
+            <header class="view-header">
+                <h2>我的资产</h2>
+                <div class="view-header-right">
+                    <div class="asset-filter-tabs">
+                        <button class="filter-tab active" data-filter="all">全部</button>
+                        <button class="filter-tab" data-filter="image">图片</button>
+                        <button class="filter-tab" data-filter="video">视频</button>
+                    </div>
+                </div>
+            </header>
+            <div class="assets-scroll" id="assetsScroll">
+                <div class="assets-container" id="assetsTimeline">
+                    <!-- Asset groups rendered by JS -->
+                </div>
+                <div class="empty-state" id="assetsEmptyState">
+                    <i class="fas fa-images"></i>
+                    <p>暂无创作资产</p>
+                    <span>通过 Image-LLM 或 Video-LLM 生成内容后，结果将在此展示</span>
+                </div>
             </div>
         </div>
 

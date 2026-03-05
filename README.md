@@ -5,7 +5,7 @@
 ## ✨ 核心功能
 
 - **对话式创作** — 通过 WebSocket 实时对话界面描述你的漫剧构思
-- **10 节点流水线** — 剧本 → 风格 → 角色 → 分镜 → 生图 → 精修 → 高清 → 视频 → 后期 → 超分
+- **6 节点流水线** — 剧本 → 风格 → 角色 → 分镜 → 生图 → 图转视频
 - **实时流式反馈** — WebSocket Gateway 实时推送各节点执行进度
 - **快捷模板** — 预设赛博朋克、古风武侠等场景一键启动创作
 
@@ -25,7 +25,7 @@ comic-demo/
 │   ├── agent.py         # Agent 构建与编排
 │   ├── config.py        # 配置加载
 │   ├── nodes/           # 漫剧创作节点
-│   │   ├── comic_nodes/ # 10 个漫剧节点实现
+│   │   ├── comic_nodes/ # 6 个漫剧节点核心实现
 │   │   └── core_nodes/  # 核心基础节点
 │   ├── mcp_custom/      # MCP 服务器与工具注册
 │   ├── storage/         # 会话与产物存储
@@ -130,11 +130,7 @@ curl -X POST http://localhost:8002/create_comic \
 | ComicCharacterNode | 角色设计 |
 | ComicStoryboardNode | 分镜脚本 |
 | ComicStoryboardImageNode | 分镜图生成 |
-| ComicRefineImageNode | 图片精修 |
-| ComicHighresImageNode | 高清放大 |
 | ComicImage2VideoNode | 图转视频 |
-| ComicPostProductionNode | 后期合成 |
-| ComicSuperResolutionNode | 超分辨率 |
 
 ## ⚠️ 注意事项
 

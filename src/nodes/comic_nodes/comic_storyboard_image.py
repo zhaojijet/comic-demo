@@ -29,7 +29,7 @@ class ComicStoryboardImageNode(BaseNode):
         node_kind="comic_storyboard_image",
         require_prior_kind=["comic_storyboard", "comic_style"],
         default_require_prior_kind=["comic_storyboard", "comic_style"],
-        next_available_node=["comic_refine_image"],
+        next_available_node=["comic_image2video"],
     )
 
     input_schema = ComicStoryboardImageInput
