@@ -1,6 +1,9 @@
 /**
  * Comic Demo — Redesigned SPA Frontend
  * Views: Home (Chat) / Generate (Timeline) / Assets (Gallery)
+ *
+ * Model dropdowns for all three modes (text, image, video) are dynamically
+ * populated from the backend /api/providers endpoint.
  */
 
 // ── Gateway Connection ─────────────────────────────────────────────────────
@@ -365,12 +368,27 @@ document.addEventListener('DOMContentLoaded', () => {
     const modeLabel = document.getElementById('modeLabel');
     const modeIcon = document.getElementById('modeIcon');
 
+    // Mode-specific control containers
+    const textControls = document.getElementById('textControls');
+    const imageControls = document.getElementById('imageControls');
+    const videoControls = document.getElementById('videoControls');
+    const frameUploadArea = document.getElementById('frameUploadArea');
+
     // State
     let currentView = 'home';
     let currentLlmMode = 'llm';
     let currentAssetFilter = 'all';
     let isProcessing = false;
     let pendingInput = '';
+
+    // Provider state: { llm: {...}, image_llm: {...}, video_llm: {...} }
+    let providersData = null;
+    // Currently selected provider IDs for each mode
+    let selectedProviders = {
+        'llm': '',
+        'image_llm': '',
+        'video_llm': '',
+    };
 
     const renderer = new ChatRenderer(chatContainer, welcomeScreen, chatArea);
     const store = new SessionStore();
@@ -382,23 +400,87 @@ document.addEventListener('DOMContentLoaded', () => {
             wsType: 'test_llm',
             label: '文本输入',
             icon: 'fas fa-comment-dots',
-            model: 'deepseekv3.2',
+            category: 'llm',
         },
         'image-llm': {
             placeholder: '描述你想生成的图片...',
             wsType: 'test_image_llm',
             label: '图片生成',
             icon: 'fas fa-image',
-            model: 'seedream5.0-lite',
+            category: 'image_llm',
         },
         'video-llm': {
             placeholder: '描述你想生成的视频...',
             wsType: 'test_video_llm',
             label: '视频生成',
             icon: 'fas fa-video',
-            model: 'seedance1.5-pro',  // default video model
+            category: 'video_llm',
         },
     };
+
+    // ── Category → Mode mapping for convenience ───────────────────────────
+    const categoryToMode = {
+        'llm': 'llm',
+        'image_llm': 'image-llm',
+        'video_llm': 'video-llm',
+    };
+
+    // ── Fetch Providers from Backend ─────────────────────────────────────
+    async function fetchProviders() {
+        try {
+            const resp = await fetch('/api/providers');
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            providersData = await resp.json();
+            console.log('[App] Providers loaded:', providersData);
+
+            // Populate dropdowns
+            populateModelDropdown('llm', 'textModelDropdownMenu', 'textModelLabel');
+            populateModelDropdown('image_llm', 'imageModelDropdownMenu', 'imageModelLabel');
+            populateModelDropdown('video_llm', 'modelDropdownMenu', 'modelLabel');
+        } catch (e) {
+            console.error('[App] Failed to fetch providers:', e);
+        }
+    }
+
+    function populateModelDropdown(category, menuId, labelId) {
+        const menu = document.getElementById(menuId);
+        const label = document.getElementById(labelId);
+        if (!menu || !providersData || !providersData[category]) return;
+
+        const catData = providersData[category];
+        const defaultId = catData.default;
+        const providers = catData.providers || [];
+
+        // Remove existing dynamic items (keep the header)
+        const header = menu.querySelector('.mini-dropdown-header');
+        menu.innerHTML = '';
+        if (header) menu.appendChild(header);
+
+        providers.forEach(p => {
+            const item = document.createElement('div');
+            item.className = 'mini-dropdown-item' + (p.id === defaultId ? ' active' : '');
+            item.dataset.value = p.id;
+            item.innerHTML = `
+                <span class="model-name">${escapeHtml(p.display_name)}</span>
+                ${p.description ? `<span class="model-desc">${escapeHtml(p.description)}</span>` : ''}
+                <i class="fas fa-check check-icon"></i>
+            `;
+            menu.appendChild(item);
+        });
+
+        // Set default selection
+        if (defaultId) {
+            selectedProviders[category] = defaultId;
+            const defaultProvider = providers.find(p => p.id === defaultId);
+            if (defaultProvider) {
+                if (label) label.textContent = defaultProvider.display_name;
+            }
+        } else if (providers.length > 0) {
+            selectedProviders[category] = providers[0].id;
+            if (label) label.textContent = providers[0].display_name;
+            if (modeModelLabel) modeModelLabel.textContent = providers[0].display_name;
+        }
+    }
 
     // ── SPA Routing ───────────────────────────────────────────────────
     function switchView(viewName) {
@@ -422,8 +504,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // ── LLM Mode Dropdown ─────────────────────────────────────────────
-    const videoControls = document.getElementById('videoControls');
-    const frameUploadArea = document.getElementById('frameUploadArea');
 
     function setLlmMode(mode) {
         currentLlmMode = mode;
@@ -437,8 +517,13 @@ document.addEventListener('DOMContentLoaded', () => {
             item.classList.toggle('active', item.dataset.mode === mode);
         });
 
-        // Show/hide video-specific controls
+        // Show/hide mode-specific controls
+        const isText = (mode === 'llm');
+        const isImage = (mode === 'image-llm');
         const isVideo = (mode === 'video-llm');
+
+        textControls.classList.toggle('hidden', !isText);
+        imageControls.classList.toggle('hidden', !isImage);
         videoControls.classList.toggle('hidden', !isVideo);
         frameUploadArea.classList.toggle('hidden', !isVideo);
 
@@ -473,8 +558,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
-    // ── Video Controls — Mini Dropdowns ────────────────────────────────
-    // Generic mini-dropdown system
+    // ── Mini Dropdowns — Generic System ────────────────────────────────
     function setupMiniDropdown(triggerId, menuId, onSelect) {
         const trigger = document.getElementById(triggerId);
         const menu = document.getElementById(menuId);
@@ -490,27 +574,47 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
 
-        menu.querySelectorAll('.mini-dropdown-item').forEach(item => {
-            item.addEventListener('click', (e) => {
-                e.stopPropagation();
-                // Update active state
-                menu.querySelectorAll('.mini-dropdown-item').forEach(i => i.classList.remove('active'));
-                item.classList.add('active');
-                // Reset check icons
-                menu.querySelectorAll('.check-icon').forEach(c => c.style.opacity = '0');
-                const checkIcon = item.querySelector('.check-icon');
-                if (checkIcon) checkIcon.style.opacity = '1';
-                // Callback
-                if (onSelect) onSelect(item.dataset.value, item);
-                closeAllDropdowns();
-            });
+        // Use event delegation for dynamically created items
+        menu.addEventListener('click', (e) => {
+            const item = e.target.closest('.mini-dropdown-item');
+            if (!item) return;
+            e.stopPropagation();
+
+            // Update active state
+            menu.querySelectorAll('.mini-dropdown-item').forEach(i => i.classList.remove('active'));
+            item.classList.add('active');
+            // Reset check icons
+            menu.querySelectorAll('.check-icon').forEach(c => c.style.opacity = '0');
+            const checkIcon = item.querySelector('.check-icon');
+            if (checkIcon) checkIcon.style.opacity = '1';
+            // Callback
+            if (onSelect) onSelect(item.dataset.value, item);
+            closeAllDropdowns();
         });
     }
 
-    // Model selector
+    // Text model selector
+    setupMiniDropdown('textModelDropdownTrigger', 'textModelDropdownMenu', (value, item) => {
+        const nameEl = item.querySelector('.model-name');
+        const label = document.getElementById('textModelLabel');
+        if (label && nameEl) label.textContent = nameEl.textContent;
+        selectedProviders['llm'] = value;
+    });
+
+    // Image model selector
+    setupMiniDropdown('imageModelDropdownTrigger', 'imageModelDropdownMenu', (value, item) => {
+        const nameEl = item.querySelector('.model-name');
+        const label = document.getElementById('imageModelLabel');
+        if (label && nameEl) label.textContent = nameEl.textContent;
+        selectedProviders['image_llm'] = value;
+    });
+
+    // Video model selector
     setupMiniDropdown('modelDropdownTrigger', 'modelDropdownMenu', (value, item) => {
         const nameEl = item.querySelector('.model-name');
-        document.getElementById('modelLabel').textContent = nameEl ? nameEl.textContent : value;
+        const label = document.getElementById('modelLabel');
+        if (label && nameEl) label.textContent = nameEl.textContent;
+        selectedProviders['video_llm'] = value;
     });
 
     // Reference mode selector
@@ -694,25 +798,20 @@ document.addEventListener('DOMContentLoaded', () => {
         chatInput.style.height = 'auto';
         updateInputState();
 
-        const wsType = modeConfig[currentLlmMode].wsType;
+        const cfg = modeConfig[currentLlmMode];
+        const wsType = cfg.wsType;
+        const category = cfg.category;
 
         // Show user message in chat
         renderer.hideWelcome();
         renderer.addMessage('user', text);
         renderer.addTypingIndicator();
 
-        // Build model name based on mode
-        let modelName = cfg.model;
-        if (currentLlmMode === 'video-llm') {
-            // Use selected video model from dropdown
-            const activeModelItem = document.querySelector('#modelDropdownMenu .mini-dropdown-item.active');
-            if (activeModelItem) {
-                modelName = activeModelItem.dataset.value.replace(/-/g, '');
-            }
-        }
+        // Get selected provider ID for current mode
+        const providerId = selectedProviders[category] || '';
 
-        // Send to backend with mode-specific type and model
-        gateway.send(wsType, JSON.stringify({ text, model: modelName }));
+        // Send to backend with mode-specific type and provider_id
+        gateway.send(wsType, JSON.stringify({ text, provider_id: providerId }));
     }
 
     chatInput.addEventListener('input', () => {
@@ -762,22 +861,22 @@ document.addEventListener('DOMContentLoaded', () => {
                 minute: '2-digit',
             });
 
-            const modeLabel = modeConfig[session.mode]?.label || session.mode;
+            const modeLabelText = modeConfig[session.mode]?.label || session.mode;
 
             // Build media HTML if available
             let mediaHTML = '';
             if (session.mediaUrl) {
                 if (session.mediaType === 'image') {
-                    mediaHTML = `<div class="timeline-card-media"><img src="${escapeHtml(session.mediaUrl)}" alt="output"></div>`;
+                    mediaHTML = `<div class="timeline-card-media"><img src="${escapeHtml(session.mediaUrl)}" alt="output" onerror="this.outerHTML='<div class=\\'expired-media\\'>图片已过期</div>'"></div>`;
                 } else if (session.mediaType === 'video') {
-                    mediaHTML = `<div class="timeline-card-media"><video src="${escapeHtml(session.mediaUrl)}" controls></video></div>`;
+                    mediaHTML = `<div class="timeline-card-media"><video src="${escapeHtml(session.mediaUrl)}" controls onerror="this.outerHTML='<div class=\\'expired-media\\'>视频已过期</div>'"></video></div>`;
                 }
             }
 
             item.innerHTML = `
                 <div class="timeline-time">
                     ${timeStr}
-                    <span class="mode-badge">${modeLabel}</span>
+                    <span class="mode-badge">${modeLabelText}</span>
                 </div>
                 <div class="timeline-card">
                     <div class="timeline-card-section">
@@ -791,7 +890,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         ${mediaHTML}
                     </div>
                     <div class="timeline-card-actions">
-                        <button class="timeline-action-btn" onclick="navigator.clipboard.writeText('${escapeHtml(session.input).replace(/'/g, "\\'")}')">
+                        <button class="timeline-action-btn" onclick="navigator.clipboard.writeText('${escapeHtml(session.input).replace(/'/g, "\\''")}')">
                             <i class="fas fa-copy"></i> 复制输入
                         </button>
                     </div>
@@ -845,12 +944,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 if (asset.mediaType === 'image') {
                     card.innerHTML = `
-                        <img src="${escapeHtml(asset.mediaUrl)}" alt="asset">
+                        <img src="${escapeHtml(asset.mediaUrl)}" alt="asset" onerror="this.outerHTML='<div class=\\'expired-media\\'>已失效</div>'">
                         <div class="asset-card-overlay">${escapeHtml(asset.input.substring(0, 40))}</div>
                     `;
                 } else if (asset.mediaType === 'video') {
                     card.innerHTML = `
-                        <video src="${escapeHtml(asset.mediaUrl)}" muted></video>
+                        <video src="${escapeHtml(asset.mediaUrl)}" muted onerror="this.outerHTML='<div class=\\'expired-media\\'>已失效</div>'"></video>
                         <div class="play-icon"><i class="fas fa-play"></i></div>
                         <div class="asset-card-overlay">${escapeHtml(asset.input.substring(0, 40))}</div>
                     `;
@@ -884,4 +983,11 @@ document.addEventListener('DOMContentLoaded', () => {
         div.textContent = text;
         return div.innerHTML;
     }
+
+    // ── Initial Setup ──────────────────────────────────────────────────
+    // Show text controls by default (llm mode is default)
+    setLlmMode('llm');
+
+    // Fetch providers from backend
+    fetchProviders();
 });

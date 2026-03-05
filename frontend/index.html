@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Comic Demo - AI 漫剧创作助手</title>
     <meta name="description" content="基于 AI 驱动的自动化漫剧创作系统，从剧本到视频一站式完成。">
-    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="styles.css?v=3">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link
@@ -93,20 +93,45 @@
                                 <div class="mode-dropdown-item active" data-mode="llm" id="modeLLM">
                                     <i class="fas fa-comment-dots"></i>
                                     <span>文本输入</span>
-                                    <span class="mode-model-name">deepseekv3.2</span>
                                     <i class="fas fa-check check-icon"></i>
                                 </div>
                                 <div class="mode-dropdown-item" data-mode="image-llm" id="modeImageLLM">
                                     <i class="fas fa-image"></i>
                                     <span>图片生成</span>
-                                    <span class="mode-model-name">seedream5.0-lite</span>
                                     <i class="fas fa-check check-icon"></i>
                                 </div>
                                 <div class="mode-dropdown-item" data-mode="video-llm" id="modeVideoLLM">
                                     <i class="fas fa-video"></i>
                                     <span>视频生成</span>
-                                    <span class="mode-model-name">seedance</span>
                                     <i class="fas fa-check check-icon"></i>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- ══ Text LLM Model Selector (shown only in text mode) ══ -->
+                        <div class="text-controls hidden" id="textControls">
+                            <div class="mini-dropdown-wrapper" id="textModelDropdownWrapper">
+                                <button class="mini-dropdown-trigger" id="textModelDropdownTrigger">
+                                    <i class="fas fa-cube"></i>
+                                    <span id="textModelLabel">加载中...</span>
+                                </button>
+                                <div class="mini-dropdown-menu" id="textModelDropdownMenu">
+                                    <div class="mini-dropdown-header">选择文本模型</div>
+                                    <!-- Items populated dynamically by JS -->
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- ══ Image LLM Model Selector (shown only in image mode) ══ -->
+                        <div class="image-controls hidden" id="imageControls">
+                            <div class="mini-dropdown-wrapper" id="imageModelDropdownWrapper">
+                                <button class="mini-dropdown-trigger" id="imageModelDropdownTrigger">
+                                    <i class="fas fa-cube"></i>
+                                    <span id="imageModelLabel">加载中...</span>
+                                </button>
+                                <div class="mini-dropdown-menu" id="imageModelDropdownMenu">
+                                    <div class="mini-dropdown-header">选择图片模型</div>
+                                    <!-- Items populated dynamically by JS -->
                                 </div>
                             </div>
                         </div>
@@ -117,19 +142,11 @@
                             <div class="mini-dropdown-wrapper" id="modelDropdownWrapper">
                                 <button class="mini-dropdown-trigger" id="modelDropdownTrigger">
                                     <i class="fas fa-cube"></i>
-                                    <span id="modelLabel">Seedance 1.5 Pro</span>
+                                    <span id="modelLabel">加载中...</span>
                                 </button>
                                 <div class="mini-dropdown-menu" id="modelDropdownMenu">
-                                    <div class="mini-dropdown-header">选择模型</div>
-                                    <div class="mini-dropdown-item active" data-value="seedance-1.5-pro">
-                                        <span class="model-name">Seedance 1.5 Pro</span>
-                                        <span class="model-desc">高质量</span>
-                                        <i class="fas fa-check check-icon"></i>
-                                    </div>
-                                    <div class="mini-dropdown-item" data-value="seedance-1.0-pro-fast">
-                                        <span class="model-name">Seedance 1.0 Pro Fast</span>
-                                        <span class="model-desc">高性价比</span>
-                                    </div>
+                                    <div class="mini-dropdown-header">选择视频模型</div>
+                                    <!-- Items populated dynamically by JS -->
                                 </div>
                             </div>
 

@@ -17,6 +17,7 @@ if COMICDEMO_SRC not in sys.path:
 
 from agent import build_agent, ClientContext
 from config import load_settings
+from llm_client import LLMRegistry, LLMClient
 from storage.agent_memory import ArtifactStore
 from utils.logging import get_logger
 
@@ -38,6 +39,15 @@ app.add_middleware(
 # Initialize settings and store
 CONFIG_PATH = os.path.join(ROOT_DIR, "config.toml")
 settings = load_settings(CONFIG_PATH)
+
+# ── Initialize LLM Registry from settings ─────────────────────────────────────
+llm_registry = LLMRegistry.from_settings(settings)
+logger.info(
+    f"[Registry] Initialized with providers: "
+    f"llm={list(llm_registry._providers.get('llm', {}).keys())}, "
+    f"image_llm={list(llm_registry._providers.get('image_llm', {}).keys())}, "
+    f"video_llm={list(llm_registry._providers.get('video_llm', {}).keys())}"
+)
 
 
 class ComicRequest(BaseModel):
@@ -215,7 +225,6 @@ async def stream_comic_creation(session_id: str, user_prompt: str):
 async def execute_single_node(session_id: str, node_key: str):
     """单独执行一个工作流节点并返回结果到前端。"""
     from agent import build_agent
-    from core.config import settings
 
     node_mapping = {
         "script": "ComicScriptNode",
@@ -305,6 +314,27 @@ async def execute_single_node(session_id: str, node_key: str):
             await agent._exit_stack.aclose()
 
 
+def _resolve_provider(category: str, provider_id: Optional[str]) -> tuple:
+    """
+    Resolve a provider from the registry.
+    Returns (client, config, model_name) tuple.
+    """
+    if provider_id:
+        try:
+            entry = llm_registry.get_provider(category, provider_id)
+        except KeyError:
+            # Fallback to default if invalid provider_id
+            logger.warning(
+                f"[Registry] Provider '{provider_id}' not found in '{category}', "
+                f"using default"
+            )
+            entry = llm_registry.get_default(category)
+    else:
+        entry = llm_registry.get_default(category)
+
+    return entry["client"], entry["config"], entry["model"]
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket Gateway endpoint — inspired by openclaw's WS control plane."""
@@ -362,17 +392,18 @@ async def websocket_endpoint(websocket: WebSocket):
                 # Run the comic creation pipeline in the background
                 asyncio.create_task(stream_comic_creation(session_id, user_prompt))
 
+            # ── LLM Test Messages (pluggable via registry) ────────────────
             if msg_type in ("test_llm", "test_image_llm", "test_video_llm"):
-                # Parse JSON string from frontend if possible
+                # Parse JSON string from frontend
                 content_obj = message.get("content", "")
                 user_content = ""
-                frontend_model = None
+                frontend_provider_id = None
 
                 if isinstance(content_obj, str) and content_obj.startswith("{"):
                     try:
                         content_dict = json.loads(content_obj)
                         user_content = content_dict.get("text", "").strip()
-                        frontend_model = content_dict.get("model", "")
+                        frontend_provider_id = content_dict.get("provider_id", "")
                     except Exception:
                         user_content = content_obj.strip()
                 else:
@@ -385,17 +416,13 @@ async def websocket_endpoint(websocket: WebSocket):
                     {"type": "system", "content": "正在调用文本大模型..."},
                 )
                 try:
-                    from llm_client import LLMClient
+                    client, cfg, model_name = _resolve_provider(
+                        "llm", frontend_provider_id
+                    )
+                    llm_client = LLMClient(cfg)
 
-                    client = LLMClient(settings.llm)
-
-                    model_override = None
-                    if frontend_model and "deepseek" in frontend_model.lower():
-                        model_override = "deepseek-chat"
-
-                    resp = await client.chat(
+                    resp = await llm_client.chat(
                         [{"role": "user", "content": user_content}],
-                        model_override=model_override,
                     )
                     await session_manager.send_event(
                         session_id,
@@ -427,25 +454,29 @@ async def websocket_endpoint(websocket: WebSocket):
                     {"type": "system", "content": "正在调用图片生成模型..."},
                 )
                 try:
-                    from llm_client import LLMClient
-
-                    client = LLMClient(settings.image_llm)
-
-                    model_override = None
-                    if frontend_model and "seedream" in frontend_model.lower():
-                        model_override = "doubao-seedream-5-0-260128"
-
-                    urls = await client.generate_image(
-                        user_content, model_override=model_override
+                    client, cfg, model_name = _resolve_provider(
+                        "image_llm", frontend_provider_id
                     )
+                    llm_client = LLMClient(cfg)
+
+                    urls = await llm_client.generate_image(user_content)
                     if urls:
+                        local_urls = []
+                        for idx, img_url in enumerate(urls):
+                            filename = f"gen_img_{int(asyncio.get_event_loop().time() * 1000)}_{idx}.png"
+                            save_path = os.path.join(
+                                settings.project.outputs_dir, filename
+                            )
+                            await llm_client.download_media(img_url, save_path)
+                            local_urls.append(f"/outputs/{filename}")
+
                         event = {
                             "type": "complete",
                             "input": user_content,
                             "content": "图片生成完成",
                             "result": "生图成功！",
                             "media_type": "image",
-                            "media_urls": urls,
+                            "media_urls": local_urls,
                         }
                         await session_manager.send_event(session_id, event)
                         history_store.add_session(
@@ -456,7 +487,7 @@ async def websocket_endpoint(websocket: WebSocket):
                                 "input": user_content,
                                 "output": "图片生成完成",
                                 "mediaType": "image",
-                                "mediaUrl": urls[0] if urls else None,
+                                "mediaUrl": local_urls[0] if local_urls else None,
                             }
                         )
                     else:
@@ -483,33 +514,26 @@ async def websocket_endpoint(websocket: WebSocket):
                     {"type": "system", "content": "正在调用视频生成模型..."},
                 )
                 try:
-                    from llm_client import LLMClient
-
-                    client = LLMClient(settings.video_llm)
-
-                    model_override = None
-                    if frontend_model:
-                        if (
-                            "1.0-pro-fast" in frontend_model
-                            or "1.0profast" in frontend_model.lower()
-                        ):
-                            model_override = "doubao-seedance-1-0-pro-fast-251015"
-                        elif (
-                            "1.5-pro" in frontend_model
-                            or "1.5pro" in frontend_model.lower()
-                        ):
-                            model_override = "doubao-seedance-1-5-pro-251215"
-
-                    url = await client.generate_video(
-                        user_content, model_override=model_override
+                    client, cfg, model_name = _resolve_provider(
+                        "video_llm", frontend_provider_id
                     )
+                    llm_client = LLMClient(cfg)
+
+                    url = await llm_client.generate_video(user_content)
+                    local_url = None
+                    if url:
+                        filename = f"gen_video_{int(asyncio.get_event_loop().time() * 1000)}.mp4"
+                        save_path = os.path.join(settings.project.outputs_dir, filename)
+                        await llm_client.download_media(url, save_path)
+                        local_url = f"/outputs/{filename}"
+
                     event = {
                         "type": "complete",
                         "input": user_content,
                         "content": "视频生成完成",
                         "result": "视频生成成功！",
                         "media_type": "video",
-                        "media_urls": [url] if url else [],
+                        "media_urls": [local_url] if local_url else [],
                     }
                     await session_manager.send_event(session_id, event)
                     history_store.add_session(
@@ -520,7 +544,7 @@ async def websocket_endpoint(websocket: WebSocket):
                             "input": user_content,
                             "output": "视频生成完成",
                             "mediaType": "video",
-                            "mediaUrl": url,
+                            "mediaUrl": local_url,
                         }
                     )
                 except Exception as e:
@@ -543,12 +567,18 @@ async def websocket_endpoint(websocket: WebSocket):
             session_manager.disconnect(session_id)
 
 
-# ── REST Endpoints (backward compatible) ──────────────────────────────────────
+# ── REST Endpoints ─────────────────────────────────────────────────────────────
 
 
 @app.get("/")
 async def root():
     return {"message": "Welcome to Comic Demo - AI 漫剧创作代理"}
+
+
+@app.get("/api/providers")
+async def get_providers():
+    """Return available LLM providers for all categories (used by frontend dropdowns)."""
+    return llm_registry.get_all_providers_info()
 
 
 @app.post("/create_comic")

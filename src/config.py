@@ -2,8 +2,7 @@
 from __future__ import annotations
 import os
 from pathlib import Path
-from typing import Any, Optional, Literal, List
-import time
+from typing import Any, Optional, Literal, List, Dict
 
 import tomllib
 
@@ -100,6 +99,69 @@ class ProjectConfig(ConfigBaseModel):
         return self.outputs_dir
 
 
+# ── Pluggable Provider Config ──────────────────────────────────────────────────
+
+
+class ProviderConfig(ConfigBaseModel):
+    """Configuration for a single LLM/ImageLLM/VideoLLM provider."""
+
+    model_config = ConfigDict(extra="allow")
+
+    display_name: str = ""
+    description: str = ""
+    model: str
+    base_url: str = ""
+    api_key: str = ""
+    timeout: float = 60.0
+    temperature: Optional[float] = None
+    max_retries: int = 2
+
+
+class LLMCategoryConfig(ConfigBaseModel):
+    """
+    Category config (llm / image_llm / video_llm).
+    Contains a default provider id and a dict of registered providers.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    default: str = ""
+    providers: Dict[str, ProviderConfig] = Field(default_factory=dict)
+
+    def get_default_provider(self) -> ProviderConfig:
+        """Return the default provider config."""
+        if self.default and self.default in self.providers:
+            return self.providers[self.default]
+        # Fallback: return first provider
+        if self.providers:
+            return next(iter(self.providers.values()))
+        raise ValueError("No providers configured for this category")
+
+    def get_provider(self, provider_id: str) -> ProviderConfig:
+        """Return a specific provider config by ID."""
+        if provider_id not in self.providers:
+            raise KeyError(
+                f"Provider '{provider_id}' not found. "
+                f"Available: {list(self.providers.keys())}"
+            )
+        return self.providers[provider_id]
+
+    def list_providers(self) -> list[dict[str, str]]:
+        """Return a serializable list of provider summaries."""
+        return [
+            {
+                "id": pid,
+                "display_name": p.display_name or pid,
+                "description": p.description,
+                "model": p.model,
+            }
+            for pid, p in self.providers.items()
+        ]
+
+
+# ── Legacy single-provider configs (kept for backward compatibility) ───────────
+
+
 class LLMConfig(ConfigBaseModel):
     model: str
     base_url: str
@@ -123,6 +185,9 @@ class VideoLLMConfig(ConfigBaseModel):
     api_key: str = ""
     timeout: float = 120.0
     max_retries: int = 2
+
+
+# ── Other configs ──────────────────────────────────────────────────────────────
 
 
 class MCPConfig(ConfigBaseModel):
@@ -155,12 +220,14 @@ class Settings(ConfigBaseModel):
     developer: DeveloperConfig
     project: ProjectConfig
 
-    llm: LLMConfig
-    image_llm: ImageLLMConfig = Field(
-        default_factory=lambda: ImageLLMConfig(model="seedream-5.0")
+    llm: LLMCategoryConfig = Field(
+        default_factory=lambda: LLMCategoryConfig(default="")
     )
-    video_llm: VideoLLMConfig = Field(
-        default_factory=lambda: VideoLLMConfig(model="seedance-1.5")
+    image_llm: LLMCategoryConfig = Field(
+        default_factory=lambda: LLMCategoryConfig(default="")
+    )
+    video_llm: LLMCategoryConfig = Field(
+        default_factory=lambda: LLMCategoryConfig(default="")
     )
 
     local_mcp_server: MCPConfig
