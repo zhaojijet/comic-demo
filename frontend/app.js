@@ -538,6 +538,12 @@ document.addEventListener('DOMContentLoaded', () => {
             const item = document.createElement('div');
             item.className = 'mini-dropdown-item' + (p.id === defaultId ? ' active' : '');
             item.dataset.value = p.id;
+
+            // Store supported modes as a dataset attribute for video models
+            if (p.supported_modes && p.supported_modes.length > 0) {
+                item.dataset.supportedModes = p.supported_modes.join(',');
+            }
+
             item.innerHTML = `
                 <span class="model-name">${escapeHtml(p.display_name)}</span>
                 ${p.description ? `<span class="model-desc">${escapeHtml(p.description)}</span>` : ''}
@@ -547,16 +553,62 @@ document.addEventListener('DOMContentLoaded', () => {
         });
 
         // Set default selection
+        let initialModelId = null;
         if (defaultId) {
             selectedProviders[category] = defaultId;
+            initialModelId = defaultId;
             const defaultProvider = providers.find(p => p.id === defaultId);
             if (defaultProvider) {
                 if (label) label.textContent = defaultProvider.display_name;
             }
         } else if (providers.length > 0) {
             selectedProviders[category] = providers[0].id;
+            initialModelId = providers[0].id;
             if (label) label.textContent = providers[0].display_name;
             if (modeModelLabel) modeModelLabel.textContent = providers[0].display_name;
+        }
+
+        // If this is the video model dropdown, trigger mode availability check
+        if (category === 'video_llm' && initialModelId) {
+            updateModeAvailability(initialModelId);
+        }
+    }
+
+    function updateModeAvailability(videoModelId) {
+        const menu = document.getElementById('modelDropdownMenu');
+        if (!menu) return;
+
+        const selectedItem = menu.querySelector(`[data-value="${videoModelId}"]`);
+        if (!selectedItem || !selectedItem.dataset.supportedModes) return;
+
+        const supportedModes = selectedItem.dataset.supportedModes.split(',');
+        const refModeMenu = document.getElementById('refModeDropdownMenu');
+        if (!refModeMenu) return;
+
+        let activeModeStillSupported = false;
+
+        refModeMenu.querySelectorAll('.mini-dropdown-item:not(.mini-dropdown-header)').forEach(item => {
+            const mode = item.dataset.value;
+            const isSupported = supportedModes.includes(mode);
+
+            if (isSupported) {
+                item.classList.remove('disabled');
+            } else {
+                item.classList.add('disabled');
+            }
+
+            if (item.classList.contains('active') && isSupported) {
+                activeModeStillSupported = true;
+            }
+        });
+
+        // If the current video generation mode is no longer supported by the new model, fallback to text-only
+        if (!activeModeStillSupported) {
+            const textOnlyItem = refModeMenu.querySelector('[data-value="text-only"]');
+            if (textOnlyItem) {
+                // Simulate a click on the text-only option to trigger all UI updates
+                textOnlyItem.click();
+            }
         }
     }
 
@@ -634,30 +686,42 @@ document.addEventListener('DOMContentLoaded', () => {
 
         trigger.addEventListener('click', (e) => {
             e.stopPropagation();
-            const isOpen = menu.classList.contains('open');
-            closeAllDropdowns();
-            if (!isOpen) {
-                menu.classList.add('open');
-                trigger.classList.add('open');
-            }
+
+            // Close all other mini dropdowns
+            document.querySelectorAll('.mini-dropdown-menu.open').forEach(m => {
+                if (m !== menu) {
+                    m.classList.remove('open');
+                    const relatedTrigger = document.querySelector(`[aria-controls="${m.id}"]`) || m.previousElementSibling;
+                    if (relatedTrigger) relatedTrigger.classList.remove('open');
+                }
+            });
+
+            menu.classList.toggle('open');
+            trigger.classList.toggle('open');
         });
 
-        // Use event delegation for dynamically created items
         menu.addEventListener('click', (e) => {
             const item = e.target.closest('.mini-dropdown-item');
-            if (!item) return;
-            e.stopPropagation();
+            if (!item || item.classList.contains('disabled')) return; // Ignore clicks if item is disabled
 
-            // Update active state
-            menu.querySelectorAll('.mini-dropdown-item').forEach(i => i.classList.remove('active'));
+            menu.querySelectorAll('.mini-dropdown-item').forEach(el => el.classList.remove('active'));
             item.classList.add('active');
-            // Reset check icons
-            menu.querySelectorAll('.check-icon').forEach(c => c.style.opacity = '0');
-            const checkIcon = item.querySelector('.check-icon');
-            if (checkIcon) checkIcon.style.opacity = '1';
-            // Callback
-            if (onSelect) onSelect(item.dataset.value, item);
-            closeAllDropdowns();
+
+            menu.classList.remove('open');
+            trigger.classList.remove('open');
+
+            const value = item.dataset.value;
+            // Update check icons
+            menu.querySelectorAll('.check-icon').forEach(icon => {
+                icon.style.opacity = icon.closest('.mini-dropdown-item') === item ? '1' : '0';
+            });
+
+            if (onSelect) onSelect(value, item);
+
+            // If the user selected a new video model, recalculate supported modes
+            if (menuId === 'modelDropdownMenu') {
+                updateModeAvailability(value);
+            }
         });
     }
 

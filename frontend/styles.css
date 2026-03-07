@@ -603,6 +603,21 @@ body {
     margin-top: 8px;
 }
 
+/* -- Mode Dropdown Disabled State -- */
+.mini-dropdown-item.disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    background-color: transparent !important;
+}
+
+.mini-dropdown-item.disabled:hover {
+    color: var(--text-primary);
+}
+
+.mini-dropdown-item.disabled i:not(.check-icon) {
+    color: var(--text-tertiary);
+}
+
 
 /* ═══════════════════════════════════════════════════════════════════════════
    VIDEO CONTROLS — Shown only when video-llm mode is selected

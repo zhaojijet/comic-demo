@@ -154,6 +154,7 @@ class LLMCategoryConfig(ConfigBaseModel):
                 "display_name": p.display_name or pid,
                 "description": p.description,
                 "model": p.model,
+                "supported_modes": getattr(p, "supported_modes", None) or [],
             }
             for pid, p in self.providers.items()
         ]

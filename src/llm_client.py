@@ -107,6 +107,7 @@ class LLMRegistry:
             or getattr(config, "display_name", provider_id),
             "description": description or getattr(config, "description", ""),
             "model": getattr(config, "model", ""),
+            "supported_modes": getattr(config, "supported_modes", []) or [],
         }
 
     def unregister(self, category: str, provider_id: str):
@@ -175,6 +176,7 @@ class LLMRegistry:
                 "display_name": entry["display_name"],
                 "description": entry["description"],
                 "model": entry["model"],
+                "supported_modes": entry.get("supported_modes", []),
             }
             for pid, entry in providers.items()
         ]
