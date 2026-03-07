@@ -1,0 +1,74 @@
+# specialized config.toml for comic-demo
+[developer]
+developer_mode = true
+default_llm = "deepseek-chat"
+
+[project]
+media_dir = "./outputs/media"
+bgm_dir = "./resource/bgms"
+outputs_dir = "./outputs"
+
+# ── Text LLM Providers ──────────────────────────────────────────────────────
+[llm]
+default = "deepseek-chat"
+
+[llm.providers.deepseek-chat]
+display_name = "DeepSeek-V3"
+description = "通用对话"
+model = "deepseek-chat"
+base_url = "https://api.deepseek.com"
+api_key = ""
+timeout = 30.0
+temperature = 0.1
+
+# ── Image LLM Providers ─────────────────────────────────────────────────────
+[image_llm]
+default = "seedream-5"
+
+[image_llm.providers.seedream-5]
+display_name = "Seedream-5.0"
+description = "高质量生图"
+model = "doubao-seedream-5-0-260128"
+base_url = "https://ark.cn-beijing.volces.com/api/v3"
+api_key = ""
+
+# ── Video LLM Providers ─────────────────────────────────────────────────────
+[video_llm]
+default = "seedance-1-5-pro"
+
+[video_llm.providers.seedance-1-5-pro]
+display_name = "Seedance 1.5 Pro"
+description = "高质量"
+model = "doubao-seedance-1-5-pro-251215"
+base_url = "https://ark.cn-beijing.volces.com/api/v3"
+api_key = ""
+supported_modes = ["text-only", "first-frame", "first-last-frame", "sample-video"]
+
+[video_llm.providers.seedance-1-0-pro-fast]
+display_name = "Seedance 1.0 Pro Fast"
+description = "高性价比"
+model = "doubao-seedance-1-0-pro-fast-251015"
+base_url = "https://ark.cn-beijing.volces.com/api/v3"
+api_key = ""
+supported_modes = ["text-only", "first-frame"]
+
+[local_mcp_server]
+server_name = "comic_demo"
+server_cache_dir = ".comic_demo/.server_cache"
+server_transport = "streamable-http"
+url_scheme = "http"
+connect_host = "127.0.0.1"
+port = 8001
+path = "/mcp"
+available_node_pkgs = ["nodes.core_nodes", "nodes.comic_nodes"]
+available_nodes = [
+    "ComicScriptNode",
+    "ComicStyleNode",
+    "ComicCharacterNode",
+    "ComicStoryboardNode",
+    "ComicStoryboardImageNode",
+    "ComicImage2VideoNode",
+]
+
+[skills]
+skill_dir = "./.comic_demo/skills"
