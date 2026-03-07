@@ -92,7 +92,7 @@ do_stop() {
         pkill -f "$MCP_SCRIPT" 2>/dev/null && log_ok "MCP Server stopped (pkill)" || log_warn "MCP Server was not running"
     fi
 
-    rm -f "${PID_DIR}/main.pid" "${PID_DIR}/mcp.pid"
+    rm -f "${PID_DIR}/main.pid" "${PID_DIR}/mcp.pid" 2>/dev/null || true
     sleep 1
 }
 
