@@ -1,38 +1,34 @@
 # Comic Demo — AI 漫剧创作助手
 
-基于 AI Agent 驱动的自动化漫剧（漫画短剧）创作系统。从剧本构思到视频成片，通过对话式交互一站式完成。
+基于 AI Agent 驱动的自动化漫剧（漫画短剧）创作系统。从剧本构思到音视频成片，通过对话式交互与 MCP (Model Context Protocol) 架构一站式完成。
 
 ## ✨ 核心功能
 
-- **对话式创作** — 通过 WebSocket 实时对话界面描述你的漫剧构思
-- **6 节点流水线** — 剧本 → 风格 → 角色 → 分镜 → 生图 → 图转视频
-- **实时流式反馈** — WebSocket Gateway 实时推送各节点执行进度
-- **快捷模板** — 预设赛博朋克、古风武侠等场景一键启动创作
+- **双服务架构** — FastAPI 提供 WebSocket 网关与前端托管，FastMCP 驱动底层工作流引擎
+- **对话式流式创作** — 通过 WebSocket 实时交互，支持前端节点状态可视化反馈
+- **多模态生成模式** — 支持 5 种高级视频生成模式（纯文本、首帧图生视频、首尾帧生视频、多参考图生视频、样片生视频）
+- **六大核心创作节点** — 剧本 (Script) → 画风 (Style) → 角色 (Character) → 分镜 (Storyboard) → 生图 (Image) → 图转视频 (Image2Video)
 
 ## 📁 项目结构
 
 ```
 comic-demo/
-├── main.py              # FastAPI 服务入口 (REST + WebSocket Gateway)
-├── config.toml          # 项目配置 (LLM/VLM/MCP/节点)
-├── requirements.txt     # Python 依赖
-├── start_dev.sh         # 一键启动脚本 (支持 start/stop/status/restart)
-├── frontend/            # 前端界面
-│   ├── index.html       # Chat UI 页面
-│   ├── styles.css       # Minimalist Lux 样式
-│   └── app.js           # WebSocket 客户端
+├── main.py              # FastAPI 核心网关与前端托管 (Port 8002)
+├── config.toml          # 项目全量配置 (LLM/MCP/节点等参数)
+├── requirements.txt     # Python 核心依赖
+├── start_dev.sh         # 双服务一键启停脚本 (start/stop/status/restart)
+├── frontend/            # 前端应用 (Minimalist Lux 风格)
+│   ├── index.html       # SPA 页面结构
+│   ├── styles.css       # 玻璃拟态高级样式
+│   └── app.js           # 核心交互逻辑与 WebSocket 客户端
 ├── src/                 # 后端源码
-│   ├── agent.py         # Agent 构建与编排
-│   ├── config.py        # 配置加载
-│   ├── nodes/           # 漫剧创作节点
-│   │   ├── comic_nodes/ # 6 个漫剧节点核心实现
-│   │   └── core_nodes/  # 核心基础节点
-│   ├── mcp_custom/      # MCP 服务器与工具注册
-│   ├── storage/         # 会话与产物存储
-│   ├── skills/          # 技能模块
-│   └── utils/           # 工具函数
-├── prompts/tasks/       # 各节点 Prompt 模板
-└── resource/bgms/       # 背景音乐资源
+│   ├── agent.py         # 顶层 Agent 构建与编排
+│   ├── config.py        # 静态配置解析
+│   ├── nodes/           # 创作流水线节点定义
+│   ├── mcp_custom/      # MCP 服务 (Port 8001)、工具注册与请求拦截
+│   ├── storage/         # 历史记录、伪持久化会话与产物管理
+│   └── utils/           # 各类工具组件
+└── outputs/             # (运行时生成) 存放视频、图片素材与中间产物
 ```
 
 ## 🚀 快速开始
@@ -40,7 +36,6 @@ comic-demo/
 ### 1. 环境要求
 
 - Python 3.12+
-- FFmpeg（视频处理需要）
 
 ### 2. 安装依赖
 
@@ -49,13 +44,13 @@ comic-demo/
 python3 -m venv .venv
 source .venv/bin/activate
 
-# 安装依赖
+# 安装底层依赖
 pip install -r requirements.txt
 ```
 
 ### 3. 配置 API Key
 
-编辑 `config.toml`，填入你的 LLM（DeepSeek）和图/生视频模型（火山引擎）API Key：
+根据预设需要在 `config.toml` 中填写对应的大模型厂商秘钥（例如由于多模态生成，我们深度集成并依赖了 Volcengine Ark API）。
 
 ```toml
 [llm]
@@ -63,12 +58,12 @@ model = "deepseek-chat"
 base_url = "https://api.deepseek.com"
 api_key = "你的 DeepSeek API Key"
 
-[image_llm]
+[image_llm.providers.seedream-5-0]
 model = "doubao-seedream-5-0-260128"
 base_url = "https://ark.cn-beijing.volces.com/api/v3"
 api_key = "你的 火山 Ark API Key"
 
-[video_llm]
+[video_llm.providers.seedance-1-5-pro]
 model = "doubao-seedance-1-5-pro-251215"
 base_url = "https://ark.cn-beijing.volces.com/api/v3"
 api_key = "你的 火山 Ark API Key"
@@ -76,65 +71,47 @@ api_key = "你的 火山 Ark API Key"
 
 ### 4. 启动服务
 
+本系统采用了 **双进程** 架构运行，推荐使用内置的启动脚本来自动管理 MCP Server 与 Main Service。
+
 ```bash
-# 推荐使用一键启动脚本 (会自动管理后台进程)
+# 赋予执行权限
 chmod +x start_dev.sh
+
+# 一键启动所有服务并在后台保持守护
 ./start_dev.sh start
 
-# 其他服务管理命令
-./start_dev.sh status   # 查看运行状态和健康检查
-./start_dev.sh stop     # 停止服务
-./start_dev.sh restart  # 重启服务
+# 状态健康检查
+./start_dev.sh status
 
-# 手动启动 (调试模式)
-export PYTHONPATH=$(pwd)/src:$PYTHONPATH
-./.venv/bin/python main.py
+# 停止全部服务
+./start_dev.sh stop
 ```
 
-服务将在 `http://localhost:8002` 启动。
+服务就绪后，后端 API 与前端资源托管网关将在 `http://localhost:8002` 提供。
 
 ### 5. 访问界面
 
-打开浏览器访问：**http://localhost:8002/web**
+打开浏览器访问：**[http://localhost:8002/web](http://localhost:8002/web)**
 
-## 🔌 API 接口
+## 🔌 通信接口规范
 
-### WebSocket 实时对话（推荐）
+### WebSocket 实时交互网关 (Main)
 
-连接 `ws://localhost:8002/ws`，通过 JSON 消息交互：
+应用通过单一全双工长链接与大模型交互。连接点：`ws://localhost:8002/ws`。
 
 ```json
-// 发送消息
-{"type": "chat", "content": "帮我创作一个赛博朋克漫画"}
+// 下发指令 (客户端 -> 服务端)
+{"type": "chat", "content": "帮我生成一个古代武侠短片", "mode": "text-only"}
 
-// 接收事件
+// 接收进度 (服务端 -> 客户端)
 {"type": "node_start", "node": "ComicScriptNode", "content": "正在生成剧本..."}
 {"type": "node_complete", "node": "ComicScriptNode", "content": "剧本生成完成"}
-{"type": "complete", "content": "漫剧创作完成！", "result": "..."}
+{"type": "complete", "content": "漫剧创作完成！", "result": "剧情文字详情...", "media_type": "video", "media_urls": ["/outputs/demo.mp4"]}
 ```
-
-### REST API（备用）
-
-```bash
-curl -X POST http://localhost:8002/create_comic \
-  -H "Content-Type: application/json" \
-  -d '{"session_id": "test-001", "user_prompt": "赛博朋克风格短篇漫画"}'
-```
-
-## 🎨 创作流水线节点
-
-| 节点 | 功能 |
-|------|------|
-| ComicScriptNode | 剧本生成 |
-| ComicStyleNode | 画风定义 |
-| ComicCharacterNode | 角色设计 |
-| ComicStoryboardNode | 分镜脚本 |
-| ComicStoryboardImageNode | 分镜图生成 |
-| ComicImage2VideoNode | 图转视频 |
 
 ## ⚠️ 注意事项
 
-- 创作过程需要调用外部 AI 服务，请确保网络通畅
-- 单次完整创作可能需要数分钟
-- 生成的产物保存在 `./outputs/` 目录下
-- `resource/bgms/` 可放置背景音乐素材供后期使用
+- 创作流水线极大依赖外部 AI 生成服务，请确保国内/国外网络环境通畅。
+- 视频生成为异步长耗时作业，单次完整执行可能需要若干分钟，请通过前端弹提醒关注生成状态。
+- 生成的历史会话数据保存在 `./data/history.json`。
+- 多图参考生视频（Ref-Style）需且仅需 `Seedance 1.0 Lite i2v` 模型，首尾帧需 `Seedance 1.5 Pro`，后端做了自动兼容拦截，无需在前侧感知兼容性问题。

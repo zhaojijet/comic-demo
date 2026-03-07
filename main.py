@@ -2,8 +2,17 @@ import os
 import sys
 import json
 import asyncio
+import base64
+import mimetypes
 import uvicorn
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import (
+    FastAPI,
+    HTTPException,
+    WebSocket,
+    WebSocketDisconnect,
+    UploadFile,
+    File,
+)
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Optional, Dict, Any
@@ -48,11 +57,6 @@ logger.info(
     f"image_llm={list(llm_registry._providers.get('image_llm', {}).keys())}, "
     f"video_llm={list(llm_registry._providers.get('video_llm', {}).keys())}"
 )
-
-
-class ComicRequest(BaseModel):
-    session_id: str
-    user_prompt: str
 
 
 # ── WebSocket Gateway (inspired by openclaw) ──────────────────────────────────
@@ -424,6 +428,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     resp = await llm_client.chat(
                         [{"role": "user", "content": user_content}],
                     )
+                    params = {"model": model_name}
                     await session_manager.send_event(
                         session_id,
                         {
@@ -431,6 +436,7 @@ async def websocket_endpoint(websocket: WebSocket):
                             "input": user_content,
                             "content": "文本 LLM 回复",
                             "result": resp.get("content", str(resp)),
+                            "params": params,
                         },
                     )
                     history_store.add_session(
@@ -440,6 +446,7 @@ async def websocket_endpoint(websocket: WebSocket):
                             "mode": "llm",
                             "input": user_content,
                             "output": resp.get("content", str(resp)),
+                            "params": params,
                         }
                     )
                 except Exception as e:
@@ -470,6 +477,7 @@ async def websocket_endpoint(websocket: WebSocket):
                             await llm_client.download_media(img_url, save_path)
                             local_urls.append(f"/outputs/{filename}")
 
+                        params = {"model": model_name}
                         event = {
                             "type": "complete",
                             "input": user_content,
@@ -477,6 +485,7 @@ async def websocket_endpoint(websocket: WebSocket):
                             "result": "生图成功！",
                             "media_type": "image",
                             "media_urls": local_urls,
+                            "params": params,
                         }
                         await session_manager.send_event(session_id, event)
                         history_store.add_session(
@@ -488,6 +497,7 @@ async def websocket_endpoint(websocket: WebSocket):
                                 "output": "图片生成完成",
                                 "mediaType": "image",
                                 "mediaUrl": local_urls[0] if local_urls else None,
+                                "params": params,
                             }
                         )
                     else:
@@ -506,9 +516,92 @@ async def websocket_endpoint(websocket: WebSocket):
                     )
 
             elif msg_type == "test_video_llm":
-                user_content = (
-                    user_content or "赛博朋克城市里的飞行汽车呼啸而过 --duration 5"
+                user_content = user_content or "赛博朋克城市里的飞行汽车呼啸而过"
+
+                # ── Parse video generation parameters from frontend ──
+                video_ratio = "16:9"
+                video_resolution = "720p"
+                video_duration = 5
+                video_seed = -1
+                video_camera_fixed = False
+                video_watermark = True
+                first_frame_image = None
+                last_frame_image_url = None
+                ref_style_image = None
+                sample_video_url = None
+
+                if isinstance(content_obj, str) and content_obj.startswith("{"):
+                    try:
+                        vp = json.loads(content_obj)
+                        video_ratio = vp.get("ratio", "16:9")
+                        video_resolution = vp.get("resolution", "720p")
+                        video_duration = int(vp.get("duration", 5))
+                        video_seed = int(vp.get("seed", -1))
+                        video_camera_fixed = bool(vp.get("camera_fixed", False))
+                        video_watermark = bool(vp.get("watermark", True))
+                        first_frame_image = vp.get("first_frame_image") or None
+                        last_frame_image_url = vp.get("last_frame_image") or None
+                        # Support multi-image ref_style_images array
+                        raw_ref_images = vp.get("ref_style_images") or []
+                        ref_style_image = vp.get("ref_style_image") or None
+                        sample_video_url = vp.get("sample_video") or None
+                    except Exception:
+                        pass
+
+                # ── Convert local paths to base64 data URIs for API ──
+                def _local_path_to_data_uri(rel_path: str) -> str | None:
+                    """Convert a local relative path like /outputs/uploads/xx.png
+                    to a base64 data URI that the Volcengine API accepts."""
+                    if not rel_path:
+                        return None
+                    # If it's already a full URL or data URI, pass through
+                    if rel_path.startswith(("http://", "https://", "data:")):
+                        return rel_path
+                    # Resolve local file path
+                    abs_path = os.path.join(ROOT_DIR, rel_path.lstrip("/"))
+                    if not os.path.isfile(abs_path):
+                        logger.warning(f"[VideoGen] File not found: {abs_path}")
+                        return None
+                    mime, _ = mimetypes.guess_type(abs_path)
+                    if not mime:
+                        mime = "image/png"
+                    with open(abs_path, "rb") as f:
+                        b64 = base64.b64encode(f.read()).decode("utf-8")
+                    return f"data:{mime};base64,{b64}"
+
+                first_frame_image = (
+                    _local_path_to_data_uri(first_frame_image)
+                    if first_frame_image
+                    else None
                 )
+                last_frame_image_url = (
+                    _local_path_to_data_uri(last_frame_image_url)
+                    if last_frame_image_url
+                    else None
+                )
+                ref_style_image = (
+                    _local_path_to_data_uri(ref_style_image)
+                    if ref_style_image
+                    else None
+                )
+                # Convert multi-image reference list
+                ref_style_images_converted = []
+                if raw_ref_images:
+                    for ri in raw_ref_images:
+                        url = ri.get("url", "") if isinstance(ri, dict) else ri
+                        desc = ri.get("description", "") if isinstance(ri, dict) else ""
+                        converted = _local_path_to_data_uri(url)
+                        if converted:
+                            ref_style_images_converted.append(
+                                {"url": converted, "description": desc}
+                            )
+                elif ref_style_image:
+                    # Backward compat: single image
+                    ref_style_images_converted.append(
+                        {"url": ref_style_image, "description": ""}
+                    )
+                # sample_video stays as-is (API may require URL for video)
+
                 await session_manager.send_event(
                     session_id,
                     {"type": "system", "content": "正在调用视频生成模型..."},
@@ -519,14 +612,64 @@ async def websocket_endpoint(websocket: WebSocket):
                     )
                     llm_client = LLMClient(cfg)
 
-                    url = await llm_client.generate_video(user_content)
+                    # ── Progress callback for polling status ──
+                    _last_status = {"value": None}
+
+                    async def _video_progress(status: str):
+                        if status != _last_status["value"]:
+                            _last_status["value"] = status
+                            status_map = {
+                                "queued": "⏳ 排队中...",
+                                "running": "🎬 视频生成中...",
+                            }
+                            display = status_map.get(status, status)
+                            await session_manager.send_event(
+                                session_id,
+                                {
+                                    "type": "video_progress",
+                                    "content": display,
+                                    "status": status,
+                                },
+                            )
+
+                    url = await llm_client.generate_video(
+                        user_content,
+                        reference_image=first_frame_image,
+                        last_frame_image=last_frame_image_url,
+                        reference_style_images=ref_style_images_converted or None,
+                        sample_video=sample_video_url,
+                        resolution=video_resolution,
+                        ratio=video_ratio,
+                        duration=video_duration,
+                        seed=video_seed,
+                        camera_fixed=video_camera_fixed,
+                        watermark=video_watermark,
+                        on_progress=_video_progress,
+                    )
                     local_url = None
                     if url:
+                        logger.info(
+                            f"[VideoGen] Video ready, remote URL: {url[:120]}..."
+                        )
                         filename = f"gen_video_{int(asyncio.get_event_loop().time() * 1000)}.mp4"
                         save_path = os.path.join(settings.project.outputs_dir, filename)
-                        await llm_client.download_media(url, save_path)
-                        local_url = f"/outputs/{filename}"
+                        try:
+                            await llm_client.download_media(url, save_path)
+                            local_url = f"/outputs/{filename}"
+                        except Exception as dl_err:
+                            logger.warning(
+                                f"[VideoGen] Download failed ({dl_err}), using remote URL"
+                            )
+                            local_url = url  # Fallback to remote URL
 
+                    params = {
+                        "model": model_name,
+                        "ratio": video_ratio,
+                        "resolution": video_resolution,
+                        "duration": f"{video_duration}s",
+                        "seed": video_seed,
+                        "camera_fixed": "开" if video_camera_fixed else "关",
+                    }
                     event = {
                         "type": "complete",
                         "input": user_content,
@@ -534,6 +677,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         "result": "视频生成成功！",
                         "media_type": "video",
                         "media_urls": [local_url] if local_url else [],
+                        "params": params,
                     }
                     await session_manager.send_event(session_id, event)
                     history_store.add_session(
@@ -545,6 +689,7 @@ async def websocket_endpoint(websocket: WebSocket):
                             "output": "视频生成完成",
                             "mediaType": "video",
                             "mediaUrl": local_url,
+                            "params": params,
                         }
                     )
                 except Exception as e:
@@ -581,29 +726,24 @@ async def get_providers():
     return llm_registry.get_all_providers_info()
 
 
-@app.post("/create_comic")
-async def create_comic(request: ComicRequest):
-    try:
-        artifact_store = ArtifactStore(
-            os.path.join(ROOT_DIR, ".comic_demo", "artifacts"),
-            session_id=request.session_id,
-        )
+@app.post("/api/upload_frame")
+async def upload_frame(file: UploadFile = File(...)):
+    """Upload a frame image or sample video for video generation."""
+    import time
 
-        agent, node_manager = await build_agent(
-            cfg=settings, session_id=request.session_id, store=artifact_store
-        )
+    ext = os.path.splitext(file.filename or "")[1] or ".png"
+    safe_name = f"upload_{int(time.time() * 1000)}{ext}"
+    save_dir = os.path.join(ROOT_DIR, "outputs", "uploads")
+    os.makedirs(save_dir, exist_ok=True)
+    save_path = os.path.join(save_dir, safe_name)
 
-        result = await agent.ainvoke(
-            {
-                "input": f"Help me create a comic based on: {request.user_prompt}",
-                "chat_history": [],
-            }
-        )
+    content = await file.read()
+    with open(save_path, "wb") as f:
+        f.write(content)
 
-        return {"session_id": request.session_id, "result": result}
-    except Exception as e:
-        logger.error(f"Error creating comic: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    local_url = f"/outputs/uploads/{safe_name}"
+    logger.info(f"[Upload] Saved {file.filename} -> {save_path}")
+    return {"url": local_url, "filename": safe_name}
 
 
 # ── Static Files ──────────────────────────────────────────────────────────────

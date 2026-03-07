@@ -541,45 +541,143 @@ class LLMClient:
         prompt: str,
         *,
         reference_image: Optional[str] = None,
+        last_frame_image: Optional[str] = None,
+        reference_style_images: Optional[list] = None,
+        sample_video: Optional[str] = None,
         model_override: Optional[str] = None,
+        resolution: str = "720p",
+        ratio: str = "16:9",
+        duration: int = 5,
+        seed: int = -1,
+        camera_fixed: bool = False,
+        watermark: bool = True,
+        on_progress=None,
     ) -> str:
         """
-        Generate video via Volcengine Ark SDK (or others if supported).
-        Returns the URL of the generated video.
+        Generate video via Volcengine Ark SDK.
+
+        Supports 5 modes based on which media inputs are provided:
+        1. Text-to-video: only prompt
+        2. First-frame image-to-video: prompt + reference_image
+        3. First+last-frame image-to-video: prompt + reference_image + last_frame_image
+        4. Reference-style image-to-video: prompt + reference_style_images (1-4 images)
+        5. Sample-video-to-video: prompt + sample_video
+
+        Args:
+            prompt: Text description for the video.
+            reference_image: URL/base64 of first frame image.
+            last_frame_image: URL/base64 of last frame image.
+            reference_style_images: List of {url, description} dicts (1-4), each with role=reference_image.
+            sample_video: URL of sample video for video-to-video.
+            model_override: Override the configured model name.
+            resolution: Video resolution: "480p", "720p", or "1080p".
+            ratio: Aspect ratio: "16:9", "4:3", "1:1", "3:4", "9:16", "21:9", "adaptive".
+            duration: Video duration in seconds (2-12).
+            seed: Random seed (-1 for random, range: [-1, 2^32-1]).
+            camera_fixed: Whether to fix the camera position.
+            watermark: Whether to include a watermark.
+            on_progress: Optional async callback(status: str) called during polling.
+
+        Returns:
+            The URL of the generated video.
         """
         base_url = getattr(self.video_config, "base_url", "") or ""
         is_ark = bool(base_url and "volces.com" in base_url)
         if is_ark and AsyncArk is not None:
-            content = []
+            # ── Assemble content list based on mode ──
+            content = [{"type": "text", "text": prompt}]
 
-            # Text prompt with optional flags
-            text_part = {"type": "text", "text": prompt}
-            content.append(text_part)
-
-            # Optional image reference
-            if reference_image:
+            if sample_video:
+                # Mode 5: Sample video-to-video
                 content.append(
-                    {"type": "image_url", "image_url": {"url": reference_image}}
+                    {"type": "video_url", "video_url": {"url": sample_video}}
                 )
+            elif reference_style_images:
+                # Mode 4: Reference-style image-to-video (1-4 images)
+                for ri in reference_style_images[:4]:
+                    img_url = ri.get("url", ri) if isinstance(ri, dict) else ri
+                    content.append(
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": img_url},
+                            "role": "reference_image",
+                        }
+                    )
+            elif reference_image:
+                if last_frame_image:
+                    # Mode 3: First+last frame — role at content-item level
+                    content.append(
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": reference_image},
+                            "role": "first_frame",
+                        }
+                    )
+                    content.append(
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": last_frame_image},
+                            "role": "last_frame",
+                        }
+                    )
+                else:
+                    # Mode 2: First-frame only — no role needed
+                    content.append(
+                        {"type": "image_url", "image_url": {"url": reference_image}}
+                    )
+
+            # ── Build API parameters ──
+            # Enforce model compatibility per task type:
+            #   - ref-style (r2v): only doubao-seedance-1-0-lite-i2v-250428
+            #   - first+last frame (flf2v): only doubao-seedance-1-5-pro-251215
+            effective_model = model_override or getattr(self.video_config, "model", "")
+            if reference_style_images:
+                effective_model = "doubao-seedance-1-0-lite-i2v-250428"
+                logger.info(f"[VideoGen] Ref-style mode: using model {effective_model}")
+            elif reference_image and last_frame_image:
+                if "1-0-pro-fast" in effective_model or "lite" in effective_model:
+                    effective_model = "doubao-seedance-1-5-pro-251215"
+                    logger.info(
+                        f"[VideoGen] First+last frame mode: overriding to {effective_model}"
+                    )
+
+            create_params = {
+                "model": effective_model,
+                "content": content,
+                "resolution": resolution,
+                "ratio": ratio,
+                "duration": duration,
+                "seed": seed,
+                "camera_fixed": camera_fixed,
+                "watermark": watermark,
+            }
 
             resp = await self.video_client.content_generation.tasks.create(
-                model=model_override or getattr(self.video_config, "model", ""),
-                content=content,
+                **create_params
             )
 
+            # ── Poll for completion with progress callback ──
             task_id = resp.id
-            import asyncio
 
             while True:
-                task_status = await self.video_client.content_generation.tasks.get(
+                task_result = await self.video_client.content_generation.tasks.get(
                     task_id=task_id
                 )
-                if task_status.status == "succeeded":
-                    return task_status.content.video_url
-                elif task_status.status == "failed":
+                current_status = task_result.status
+
+                # Notify caller of progress
+                if on_progress:
+                    try:
+                        await on_progress(current_status)
+                    except Exception:
+                        pass  # Don't let progress callback errors break polling
+
+                if current_status == "succeeded":
+                    return task_result.content.video_url
+                elif current_status == "failed":
                     error_msg = (
-                        task_status.error.message
-                        if task_status.error
+                        task_result.error.message
+                        if task_result.error
                         else "Unknown Error"
                     )
                     raise Exception(f"Video generation failed: {error_msg}")

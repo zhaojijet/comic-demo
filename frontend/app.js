@@ -131,7 +131,7 @@ class ChatRenderer {
         }
     }
 
-    addMessage(type, content) {
+    addMessage(type, content, params = null) {
         this.hideWelcome();
         const msg = document.createElement('div');
         msg.className = `message ${type}`;
@@ -144,11 +144,13 @@ class ChatRenderer {
 
         // Media rendering
         let renderedContent = this.escapeHtml(content);
+        const paramsHTML = this.renderParams(params);
 
         msg.innerHTML = `
             <div class="message-avatar"><i class="fas ${avatarIcon}"></i></div>
             <div class="message-body">
                 <div class="message-content">${renderedContent}</div>
+                ${paramsHTML}
                 <div class="message-time">${time}</div>
             </div>
         `;
@@ -158,7 +160,46 @@ class ChatRenderer {
         return msg;
     }
 
-    addMediaMessage(mediaType, urls) {
+    /**
+     * Add a user message with attached media (uploaded reference images/videos).
+     * Shows the media thumbnails above the text prompt in the user's bubble.
+     */
+    addUserMessageWithMedia(text, attachments = []) {
+        this.hideWelcome();
+        const msg = document.createElement('div');
+        msg.className = 'message user';
+
+        const time = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+
+        // Build attachment preview HTML
+        let attachHTML = '';
+        if (attachments.length > 0) {
+            attachHTML = '<div class="message-attachments">';
+            for (const att of attachments) {
+                if (att.type === 'video') {
+                    attachHTML += `<div class="attachment-thumb"><video src="${this.escapeHtml(att.url)}" muted preload="metadata" style="width:100%;height:100%;object-fit:cover;border-radius:8px;"></video><div class="attachment-label"><i class="fas fa-film"></i> ${this.escapeHtml(att.label)}</div></div>`;
+                } else {
+                    attachHTML += `<div class="attachment-thumb"><img src="${this.escapeHtml(att.url)}" alt="${this.escapeHtml(att.label)}" loading="lazy"><div class="attachment-label"><i class="fas fa-image"></i> ${this.escapeHtml(att.label)}</div></div>`;
+                }
+            }
+            attachHTML += '</div>';
+        }
+
+        msg.innerHTML = `
+            <div class="message-avatar"><i class="fas fa-user"></i></div>
+            <div class="message-body">
+                ${attachHTML}
+                <div class="message-content">${this.escapeHtml(text)}</div>
+                <div class="message-time">${time}</div>
+            </div>
+        `;
+
+        this.container.appendChild(msg);
+        this.scrollToBottom();
+        return msg;
+    }
+
+    addMediaMessage(mediaType, urls, params = null) {
         this.hideWelcome();
         const msg = document.createElement('div');
         msg.className = 'message agent';
@@ -174,10 +215,13 @@ class ChatRenderer {
             }
         }
 
+        const paramsHTML = this.renderParams(params);
+
         msg.innerHTML = `
             <div class="message-avatar"><i class="fas fa-robot"></i></div>
             <div class="message-body">
                 <div class="message-content">${mediaHTML}</div>
+                ${paramsHTML}
                 <div class="message-time">${time}</div>
             </div>
         `;
@@ -185,6 +229,26 @@ class ChatRenderer {
         this.container.appendChild(msg);
         this.scrollToBottom();
         return msg;
+    }
+
+    renderParams(params) {
+        if (!params || Object.keys(params).length === 0) return '';
+        let html = '<div class="message-params">';
+        for (const [key, value] of Object.entries(params)) {
+            // Friendly labels
+            const labels = {
+                model: '模型',
+                ratio: '比例',
+                resolution: '分辨率',
+                duration: '时长',
+                seed: '种子',
+                camera_fixed: '锁定机位'
+            };
+            const label = labels[key] || key;
+            html += `<span class="param-tag">${this.escapeHtml(label)}: ${this.escapeHtml(value)}</span>`;
+        }
+        html += '</div>';
+        return html;
     }
 
     addNodeProgress(nodeName, status) {
@@ -311,6 +375,8 @@ class SessionStore {
             output: entry.output || '',
             mediaType: entry.mediaType || null,   // 'image' | 'video' | null
             mediaUrl: entry.mediaUrl || null,
+            params: entry.params || null,
+            refImages: entry.refImages || null,   // Array of {url} for ref-style sessions
         });
         this.save();
     }
@@ -361,10 +427,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const assetsEmptyState = document.getElementById('assetsEmptyState');
     const filterTabs = document.querySelectorAll('.filter-tab');
 
-    // LLM mode dropdown elements
-    const modeDropdownTrigger = document.getElementById('modeDropdownTrigger');
-    const modeDropdownMenu = document.getElementById('modeDropdownMenu');
-    const modeDropdownItems = document.querySelectorAll('.mode-dropdown-item');
+    // Main Mode selectors
     const modeLabel = document.getElementById('modeLabel');
     const modeIcon = document.getElementById('modeIcon');
 
@@ -374,12 +437,27 @@ document.addEventListener('DOMContentLoaded', () => {
     const videoControls = document.getElementById('videoControls');
     const frameUploadArea = document.getElementById('frameUploadArea');
 
+    // Upload cards
+    const firstFrameCard = document.getElementById('firstFrameCard');
+    const lastFrameCard = document.getElementById('lastFrameCard');
+    const frameDivider = document.getElementById('frameDivider');
+    const refImagesContainer = document.getElementById('refImagesContainer');
+    const refImagesTimeline = document.getElementById('refImagesTimeline');
+    const sampleVideoCard = document.getElementById('sampleVideoCard');
+
     // State
     let currentView = 'home';
     let currentLlmMode = 'llm';
     let currentAssetFilter = 'all';
     let isProcessing = false;
     let pendingInput = '';
+    let currentVideoRefMode = 'text-only'; // text-only | first-frame | first-last-frame | ref-style | sample-video
+
+    // Uploaded file URLs (set after upload to /api/upload_frame)
+    let uploadedFirstFrame = null;
+    let uploadedLastFrame = null;
+    let uploadedRefImages = []; // Array of {url, description} for ref-style mode (up to 4)
+    let uploadedSampleVideo = null;
 
     // Provider state: { llm: {...}, image_llm: {...}, video_llm: {...} }
     let providersData = null;
@@ -508,14 +586,20 @@ document.addEventListener('DOMContentLoaded', () => {
     function setLlmMode(mode) {
         currentLlmMode = mode;
         const cfg = modeConfig[mode];
-        modeLabel.textContent = cfg.label;
-        modeIcon.className = cfg.icon;
+        if (modeLabel) modeLabel.textContent = cfg.label;
+        if (modeIcon) modeIcon.className = cfg.icon;
         chatInput.placeholder = cfg.placeholder;
 
-        // Update active state in dropdown items
-        modeDropdownItems.forEach(item => {
-            item.classList.toggle('active', item.dataset.mode === mode);
-        });
+        // Update active state in mode dropdown menu
+        const modeMenu = document.getElementById('modeDropdownMenu');
+        if (modeMenu) {
+            modeMenu.querySelectorAll('.mini-dropdown-item').forEach(item => {
+                const isActive = item.dataset.mode === mode;
+                item.classList.toggle('active', isActive);
+                const checkIcon = item.querySelector('.check-icon');
+                if (checkIcon) checkIcon.style.opacity = isActive ? '1' : '0';
+            });
+        }
 
         // Show/hide mode-specific controls
         const isText = (mode === 'llm');
@@ -525,40 +609,24 @@ document.addEventListener('DOMContentLoaded', () => {
         textControls.classList.toggle('hidden', !isText);
         imageControls.classList.toggle('hidden', !isImage);
         videoControls.classList.toggle('hidden', !isVideo);
-        frameUploadArea.classList.toggle('hidden', !isVideo);
+
+        // Ensure proper reference mode UI is applied when switching to video mode
+        if (isVideo) {
+            updateVideoRefModeUI(currentVideoRefMode);
+        } else {
+            frameUploadArea.classList.add('hidden');
+        }
 
         // Close dropdown
         closeAllDropdowns();
         chatInput.focus();
     }
 
-    function toggleDropdown() {
-        const isOpen = modeDropdownMenu.classList.contains('open');
-        closeAllDropdowns();
-        if (!isOpen) {
-            modeDropdownMenu.classList.add('open');
-            modeDropdownTrigger.classList.add('open');
-        }
-    }
-
-    function closeDropdown() {
-        modeDropdownMenu.classList.remove('open');
-        modeDropdownTrigger.classList.remove('open');
-    }
-
-    modeDropdownTrigger.addEventListener('click', (e) => {
-        e.stopPropagation();
-        toggleDropdown();
-    });
-
-    modeDropdownItems.forEach(item => {
-        item.addEventListener('click', (e) => {
-            e.stopPropagation();
-            setLlmMode(item.dataset.mode);
-        });
-    });
-
     // ── Mini Dropdowns — Generic System ────────────────────────────────
+    setupMiniDropdown('modeDropdownTrigger', 'modeDropdownMenu', (value, item) => {
+        setLlmMode(item.dataset.mode);
+    });
+
     function setupMiniDropdown(triggerId, menuId, onSelect) {
         const trigger = document.getElementById(triggerId);
         const menu = document.getElementById(menuId);
@@ -617,11 +685,119 @@ document.addEventListener('DOMContentLoaded', () => {
         selectedProviders['video_llm'] = value;
     });
 
-    // Reference mode selector
+    // Function to update the UI based on selected video reference mode
+    function updateVideoRefModeUI(value) {
+        currentVideoRefMode = value;
+
+        // Reset uploaded files when switching modes (if called from dropdown)
+        uploadedFirstFrame = null;
+        uploadedLastFrame = null;
+        uploadedRefImages = [];
+        uploadedSampleVideo = null;
+        resetUploadCards();
+        resetRefImagesTimeline();
+
+        // Show/hide upload area based on mode
+        const showUpload = (value !== 'text-only');
+        frameUploadArea.classList.toggle('hidden', !showUpload);
+
+        // Show/hide individual cards
+        firstFrameCard.classList.toggle('hidden', !['first-frame', 'first-last-frame'].includes(value));
+        frameDivider.classList.toggle('hidden', value !== 'first-last-frame');
+        lastFrameCard.classList.toggle('hidden', value !== 'first-last-frame');
+        refImagesContainer.classList.toggle('hidden', value !== 'ref-style');
+        sampleVideoCard.classList.toggle('hidden', value !== 'sample-video');
+    }
+
+    // Reference mode selector — switch upload UI based on selected mode
     setupMiniDropdown('refModeDropdownTrigger', 'refModeDropdownMenu', (value, item) => {
         const nameEl = item.querySelector('span:not(.model-tag)');
         document.getElementById('refModeLabel').textContent = nameEl ? nameEl.textContent : value;
+        updateVideoRefModeUI(value);
     });
+
+    function resetUploadCards() {
+        [firstFrameCard, lastFrameCard, sampleVideoCard].forEach(card => {
+            if (!card) return;
+            const icon = card.querySelector('i');
+            const span = card.querySelector('span');
+            const img = card.querySelector('img');
+            const video = card.querySelector('video');
+            if (img) img.remove();
+            if (video) video.remove();
+            if (icon) icon.style.display = '';
+            if (span) span.style.display = '';
+            card.classList.remove('uploaded');
+        });
+    }
+
+    // ── Multi-image reference timeline management ──
+    function resetRefImagesTimeline() {
+        uploadedRefImages = [];
+        if (!refImagesTimeline) return;
+        refImagesTimeline.innerHTML = '';
+        addRefImageSlot(0);
+    }
+
+    function addRefImageSlot(index) {
+        if (index >= 4 || !refImagesTimeline) return;
+
+        // Description card between images (after the first image)
+        if (index > 0) {
+            const descCard = document.createElement('div');
+            descCard.className = 'ref-desc-card';
+            descCard.dataset.index = index;
+            descCard.innerHTML = `
+                <i class="fas fa-pen-to-square"></i>
+                <input type="text" class="ref-desc-input" placeholder="描述..." data-index="${index}">
+            `;
+            // Stop click from propagating when typing
+            descCard.querySelector('input').addEventListener('click', e => e.stopPropagation());
+            refImagesTimeline.appendChild(descCard);
+        }
+
+        // Image upload card
+        const card = document.createElement('div');
+        card.className = 'frame-upload-card ref-upload-card';
+        if (index > 0) card.classList.add('ref-optional'); // Optional slots get lighter style
+        card.dataset.index = index;
+        card.innerHTML = `<i class="fas fa-plus"></i><span>${index === 0 ? '图1' : '第' + (index + 1) + '帧'}</span><input type="file" accept="image/*" style="display:none">`;
+        refImagesTimeline.appendChild(card);
+
+        // Wire up upload
+        const inputEl = card.querySelector('input[type="file"]');
+        card.addEventListener('click', () => inputEl.click());
+        inputEl.addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const icon = card.querySelector('i');
+            const span = card.querySelector('span');
+            if (icon) icon.className = 'fas fa-spinner fa-spin';
+            if (span) span.textContent = '上传中...';
+
+            const url = await uploadFileToServer(file);
+            if (url) {
+                if (icon) icon.style.display = 'none';
+                if (span) span.style.display = 'none';
+                const img = document.createElement('img');
+                img.src = url;
+                img.style.cssText = 'width:100%;height:100%;object-fit:cover;border-radius:6px;';
+                card.appendChild(img);
+                card.classList.add('uploaded');
+                card.classList.remove('ref-optional');
+                // Store ref image
+                uploadedRefImages[index] = { url, description: '' };
+                // Add next slot if under limit
+                if (uploadedRefImages.filter(Boolean).length < 4) {
+                    addRefImageSlot(uploadedRefImages.filter(Boolean).length);
+                }
+            } else {
+                if (icon) icon.className = 'fas fa-plus';
+                if (span) span.textContent = index === 0 ? '第1帧' : `第${index + 1}帧`;
+            }
+            inputEl.value = '';
+        });
+    }
 
     // Duration selector
     setupMiniDropdown('durationDropdownTrigger', 'durationDropdownMenu', (value, item) => {
@@ -665,8 +841,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Close ALL dropdowns when clicking outside
     function closeAllDropdowns() {
-        // Main mode dropdown
-        closeDropdown();
         // All mini-dropdowns
         document.querySelectorAll('.mini-dropdown-menu').forEach(m => m.classList.remove('open'));
         document.querySelectorAll('.mini-dropdown-trigger').forEach(t => t.classList.remove('open'));
@@ -725,33 +899,43 @@ document.addEventListener('DOMContentLoaded', () => {
                 renderer.addTypingIndicator();
                 break;
 
+            case 'video_progress':
+                renderer.removeTypingIndicator();
+                renderer.addMessage('system', event.content);
+                renderer.addTypingIndicator();
+                break;
+
             case 'complete':
                 renderer.removeTypingIndicator();
-                if (event.content) renderer.addMessage('agent', event.content);
+                if (event.content) renderer.addMessage('agent', event.content, event.params);
 
                 // Render text result in chat
                 if (event.result) {
-                    renderer.addMessage('agent', event.result);
+                    renderer.addMessage('agent', event.result, event.params);
                 }
 
                 // Render media inline (images/videos)
                 if (event.media_type && event.media_urls && event.media_urls.length > 0) {
-                    renderer.addMediaMessage(event.media_type, event.media_urls);
+                    renderer.addMediaMessage(event.media_type, event.media_urls, event.params);
                 }
 
                 // Save to session store
+                const refImagesForStore = (currentVideoRefMode === 'ref-style' && uploadedRefImages.filter(Boolean).length > 0)
+                    ? uploadedRefImages.filter(Boolean).map(ri => ({ url: ri.url, description: ri.description || '' }))
+                    : null;
                 store.add({
-                    mode: event.mode || currentLlmMode, // Use event mode if available (from history)
+                    mode: event.mode || currentLlmMode,
                     input: event.input || pendingInput,
                     output: event.result || event.content || '',
                     mediaType: event.media_type || null,
                     mediaUrl: (event.media_urls && event.media_urls.length > 0) ? event.media_urls[0] : null,
+                    params: event.params || null,
+                    refImages: refImagesForStore,
                 });
 
                 isProcessing = false;
                 updateInputState();
 
-                // If on Generation page, refresh timeline to show the new item
                 if (currentView === 'gen') renderGenTimeline();
                 if (currentView === 'assets' && event.media_type) renderAssetsTimeline();
                 break;
@@ -760,7 +944,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 renderer.removeTypingIndicator();
                 renderer.addMessage('system', event.content);
 
-                // Also save error sessions
                 store.add({
                     mode: currentLlmMode,
                     input: pendingInput,
@@ -802,16 +985,81 @@ document.addEventListener('DOMContentLoaded', () => {
         const wsType = cfg.wsType;
         const category = cfg.category;
 
-        // Show user message in chat
+        // Show user message in chat — include uploaded media if applicable
         renderer.hideWelcome();
-        renderer.addMessage('user', text);
+
+        // Collect attachments for display
+        const attachments = [];
+        if (currentLlmMode === 'video-llm') {
+            if (currentVideoRefMode === 'first-frame' && uploadedFirstFrame) {
+                attachments.push({ url: uploadedFirstFrame, label: '首帧', type: 'image' });
+            } else if (currentVideoRefMode === 'first-last-frame') {
+                if (uploadedFirstFrame) attachments.push({ url: uploadedFirstFrame, label: '首帧', type: 'image' });
+                if (uploadedLastFrame) attachments.push({ url: uploadedLastFrame, label: '尾帧', type: 'image' });
+            } else if (currentVideoRefMode === 'ref-style' && uploadedRefImages.length > 0) {
+                // Collect descriptions from text inputs
+                refImagesTimeline?.querySelectorAll('.ref-desc-input').forEach(input => {
+                    const idx = parseInt(input.dataset.index);
+                    if (uploadedRefImages[idx]) uploadedRefImages[idx].description = input.value.trim();
+                });
+                uploadedRefImages.filter(Boolean).forEach((ri, i) => {
+                    const desc = ri.description ? `: ${ri.description}` : '';
+                    attachments.push({ url: ri.url, label: `参考图${i + 1}${desc}`, type: 'image' });
+                });
+            } else if (currentVideoRefMode === 'sample-video' && uploadedSampleVideo) {
+                attachments.push({ url: uploadedSampleVideo, label: '样片', type: 'video' });
+            }
+        }
+
+        if (attachments.length > 0) {
+            renderer.addUserMessageWithMedia(text, attachments);
+        } else {
+            renderer.addMessage('user', text);
+        }
         renderer.addTypingIndicator();
 
         // Get selected provider ID for current mode
         const providerId = selectedProviders[category] || '';
 
-        // Send to backend with mode-specific type and provider_id
-        gateway.send(wsType, JSON.stringify({ text, provider_id: providerId }));
+        // Build payload — for video mode, include all parameters
+        const payload = { text, provider_id: providerId };
+
+        if (currentLlmMode === 'video-llm') {
+            payload.ratio = document.getElementById('ratioLabel')?.textContent || '16:9';
+            payload.resolution = document.getElementById('resolutionLabel')?.textContent?.toLowerCase() || '720p';
+            payload.duration = parseInt(document.getElementById('durationLabel')?.textContent) || 5;
+            payload.seed = parseInt(document.getElementById('seedInput')?.value) || -1;
+            payload.camera_fixed = document.getElementById('cameraFixedToggle')?.checked || false;
+            payload.watermark = document.getElementById('watermarkToggle')?.checked ?? true;
+
+            // Attach uploaded media URLs based on reference mode
+            if (currentVideoRefMode === 'first-frame' && uploadedFirstFrame) {
+                payload.first_frame_image = uploadedFirstFrame;
+            } else if (currentVideoRefMode === 'first-last-frame') {
+                if (uploadedFirstFrame) payload.first_frame_image = uploadedFirstFrame;
+                if (uploadedLastFrame) payload.last_frame_image = uploadedLastFrame;
+            } else if (currentVideoRefMode === 'ref-style' && uploadedRefImages.filter(Boolean).length > 0) {
+                payload.ref_style_images = uploadedRefImages.filter(Boolean).map(ri => ({
+                    url: ri.url,
+                    description: ri.description || ''
+                }));
+            } else if (currentVideoRefMode === 'sample-video' && uploadedSampleVideo) {
+                payload.sample_video = uploadedSampleVideo;
+            }
+        }
+
+        // Send to backend with mode-specific type
+        gateway.send(wsType, JSON.stringify(payload));
+
+        // Reset uploaded media state after sending
+        if (currentLlmMode === 'video-llm' && attachments.length > 0) {
+            uploadedFirstFrame = null;
+            uploadedLastFrame = null;
+            uploadedRefImages = [];
+            uploadedSampleVideo = null;
+            resetUploadCards();
+            resetRefImagesTimeline();
+        }
     }
 
     chatInput.addEventListener('input', () => {
@@ -873,6 +1121,39 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             }
 
+            // Build reference images thumbnail row for Generate page
+            let refImagesHTML = '';
+            if (session.refImages && session.refImages.length > 0) {
+                refImagesHTML = '<div class="timeline-ref-images">';
+                session.refImages.forEach((ri, i) => {
+                    const url = typeof ri === 'string' ? ri : ri.url;
+                    const desc = (typeof ri === 'object' && ri.description) ? ri.description : '';
+                    refImagesHTML += `<div class="timeline-ref-item"><img src="${escapeHtml(url)}" alt="参考图${i + 1}" class="timeline-ref-thumb">`;
+                    if (desc) refImagesHTML += `<span class="timeline-ref-desc">${escapeHtml(desc)}</span>`;
+                    refImagesHTML += `</div>`;
+                });
+                refImagesHTML += '</div>';
+            }
+
+            // Build params HTML
+            let paramsHTML = '';
+            if (session.params && Object.keys(session.params).length > 0) {
+                paramsHTML = '<div class="timeline-card-params">';
+                for (const [key, val] of Object.entries(session.params)) {
+                    const labels = {
+                        model: '模型',
+                        ratio: '比例',
+                        resolution: '分辨率',
+                        duration: '时长',
+                        seed: '种子',
+                        camera_fixed: '锁定机位'
+                    };
+                    const label = labels[key] || key;
+                    paramsHTML += `<span class="param-tag">${label}: ${val}</span>`;
+                }
+                paramsHTML += '</div>';
+            }
+
             item.innerHTML = `
                 <div class="timeline-time">
                     ${timeStr}
@@ -882,8 +1163,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     <div class="timeline-card-section">
                         <div class="timeline-card-label">输入</div>
                         <div class="timeline-card-text">${escapeHtml(session.input)}</div>
+                        ${refImagesHTML}
                     </div>
-                    <hr class="timeline-card-divider">
+                    ${paramsHTML}
                     <div class="timeline-card-section">
                         <div class="timeline-card-label">输出</div>
                         <div class="timeline-card-text">${escapeHtml(session.output)}</div>
@@ -983,6 +1265,104 @@ document.addEventListener('DOMContentLoaded', () => {
         div.textContent = text;
         return div.innerHTML;
     }
+
+    // ── File Upload Handling ─────────────────────────────────────────────
+    async function uploadFileToServer(file) {
+        const formData = new FormData();
+        formData.append('file', file);
+        try {
+            const resp = await fetch('/api/upload_frame', { method: 'POST', body: formData });
+            if (!resp.ok) throw new Error(`Upload failed: HTTP ${resp.status}`);
+            const data = await resp.json();
+            return data.url; // e.g. "/outputs/uploads/upload_xxx.png"
+        } catch (e) {
+            console.error('[Upload] Error:', e);
+            renderer.addMessage('system', `文件上传失败: ${e.message}`);
+            return null;
+        }
+    }
+
+    function setupCardUpload(card, inputEl, isVideo, onSuccess) {
+        if (!card || !inputEl) return;
+        card.addEventListener('click', () => inputEl.click());
+        inputEl.addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            // Show loading state
+            const icon = card.querySelector('i');
+            const span = card.querySelector('span');
+            if (icon) icon.className = 'fas fa-spinner fa-spin';
+            if (span) span.textContent = '上传中...';
+
+            const url = await uploadFileToServer(file);
+            if (url) {
+                // Show preview
+                if (icon) icon.style.display = 'none';
+                if (span) span.style.display = 'none';
+
+                if (isVideo) {
+                    const vid = document.createElement('video');
+                    vid.src = url;
+                    vid.muted = true;
+                    vid.style.cssText = 'width:100%;height:100%;object-fit:cover;border-radius:6px;';
+                    card.appendChild(vid);
+                } else {
+                    const img = document.createElement('img');
+                    img.src = url;
+                    img.style.cssText = 'width:100%;height:100%;object-fit:cover;border-radius:6px;';
+                    card.appendChild(img);
+                }
+                card.classList.add('uploaded');
+                onSuccess(url);
+            } else {
+                // Reset on failure
+                if (icon) icon.className = 'fas fa-plus';
+                if (span) span.textContent = isVideo ? '样片视频' : card.id.includes('last') ? '尾帧' : card.id.includes('ref') ? '参考图' : '首帧';
+            }
+            inputEl.value = ''; // allow re-upload
+        });
+    }
+
+    setupCardUpload(firstFrameCard, document.getElementById('firstFrameInput'), false, (url) => { uploadedFirstFrame = url; });
+    setupCardUpload(lastFrameCard, document.getElementById('lastFrameInput'), false, (url) => { uploadedLastFrame = url; });
+    setupCardUpload(sampleVideoCard, document.getElementById('sampleVideoInput'), true, (url) => { uploadedSampleVideo = url; });
+
+    // Initialize ref images timeline
+    resetRefImagesTimeline();
+
+    // ── Lightbox Logic ───────────────────────────────────────────────
+    const lightboxModal = document.getElementById('lightboxModal');
+    const lightboxImg = document.getElementById('lightboxImg');
+    const lightboxClose = lightboxModal?.querySelector('.lightbox-close');
+
+    document.addEventListener('click', (e) => {
+        let target = e.target;
+
+        // Find if we clicked an image or a container that has an image
+        const imgContainer = target.closest('.message-content, .timeline-card-media, .asset-card');
+        if (!imgContainer) return;
+
+        const img = imgContainer.querySelector('img');
+        if (img && lightboxModal && lightboxImg) {
+            lightboxImg.src = img.src;
+            lightboxModal.classList.add('open');
+        }
+    });
+
+    const closeLightbox = () => {
+        if (lightboxModal) {
+            lightboxModal.classList.remove('open');
+            setTimeout(() => {
+                if (lightboxImg) lightboxImg.src = '';
+            }, 400); // match transition duration
+        }
+    };
+
+    lightboxClose?.addEventListener('click', closeLightbox);
+    lightboxModal?.addEventListener('click', (e) => {
+        if (e.target === lightboxModal) closeLightbox();
+    });
 
     // ── Initial Setup ──────────────────────────────────────────────────
     // Show text controls by default (llm mode is default)

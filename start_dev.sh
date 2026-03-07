@@ -195,11 +195,11 @@ do_start() {
     fi
 
     echo ""
-    echo "=== 🎬 Comic Demo Ready ==="
-    echo "  API:      http://localhost:${MAIN_PORT}/"
-    echo "  Frontend: http://localhost:${MAIN_PORT}/web/"
-    echo "  Logs:     tail -f $LOG_DIR/main.log"
-    echo "  Stop:     ./start_dev.sh stop"
+    echo -e "${GREEN}=== 🎬 Comic Demo Ready ===${NC}"
+    echo -e "  API:      http://localhost:${MAIN_PORT}/"
+    echo -e "  Frontend: ${YELLOW}http://localhost:${MAIN_PORT}/web/${NC}"
+    echo -e "  Logs:     tail -f $LOG_DIR/main.log"
+    echo -e "  Stop:     ./start_dev.sh stop"
 }
 
 # ── Main ──────────────────────────────────────────────────────────────────
