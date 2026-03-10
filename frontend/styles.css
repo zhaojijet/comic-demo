@@ -395,6 +395,7 @@ body {
     border-radius: var(--radius-md);
     overflow: hidden;
     border: 1px solid var(--border);
+    position: relative;
 }
 
 .media-content img,
@@ -403,6 +404,36 @@ body {
     width: 100%;
     max-width: 480px;
     height: auto;
+}
+
+.media-download-btn {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(0, 0, 0, 0.5);
+    color: white;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    opacity: 0;
+    transition: all var(--transition);
+    backdrop-filter: blur(4px);
+    z-index: 5;
+}
+
+.media-content:hover .media-download-btn {
+    opacity: 1;
+}
+
+.media-download-btn:hover {
+    background: var(--accent);
+    transform: scale(1.1);
 }
 
 /* Node Progress Card */
@@ -1441,10 +1472,36 @@ body {
     font-size: 11px;
     opacity: 0;
     transition: opacity var(--transition);
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 6px;
 }
 
 .asset-card:hover .asset-card-overlay {
     opacity: 1;
+}
+
+.asset-download-btn {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(255, 255, 255, 0.2);
+    color: white;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    flex-shrink: 0;
+    transition: all var(--transition);
+    backdrop-filter: blur(4px);
+}
+
+.asset-download-btn:hover {
+    background: var(--accent);
+    transform: scale(1.1);
 }
 
 .asset-card .play-icon {

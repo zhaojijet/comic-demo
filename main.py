@@ -658,9 +658,9 @@ async def websocket_endpoint(websocket: WebSocket):
                             local_url = f"/outputs/{filename}"
                         except Exception as dl_err:
                             logger.warning(
-                                f"[VideoGen] Download failed ({dl_err}), using remote URL"
+                                f"[VideoGen] Download failed ({dl_err}), skipping remote URL (would expire)"
                             )
-                            local_url = url  # Fallback to remote URL
+                            local_url = None
 
                     params = {
                         "model": model_name,
@@ -714,17 +714,10 @@ async def websocket_endpoint(websocket: WebSocket):
 
 # ── REST Endpoints ─────────────────────────────────────────────────────────────
 
-
-@app.get("/")
-async def root():
-    return {"message": "Welcome to Comic Demo - AI 漫剧创作代理"}
-
-
 @app.get("/api/providers")
 async def get_providers():
     """Return available LLM providers for all categories (used by frontend dropdowns)."""
     return llm_registry.get_all_providers_info()
-
 
 @app.post("/api/upload_frame")
 async def upload_frame(file: UploadFile = File(...)):
@@ -745,17 +738,18 @@ async def upload_frame(file: UploadFile = File(...)):
     logger.info(f"[Upload] Saved {file.filename} -> {save_path}")
     return {"url": local_url, "filename": safe_name}
 
-
 # ── Static Files ──────────────────────────────────────────────────────────────
-
-frontend_path = os.path.join(ROOT_DIR, "frontend")
-if os.path.exists(frontend_path):
-    app.mount("/web", StaticFiles(directory=frontend_path, html=True), name="frontend")
+# NOTE: /outputs MUST be mounted BEFORE / because the catch-all "/" mount
+# would otherwise swallow all /outputs/* requests and return 404.
 
 outputs_path = os.path.join(ROOT_DIR, "outputs")
 if os.path.exists(outputs_path):
     app.mount("/outputs", StaticFiles(directory=outputs_path), name="outputs")
 
+frontend_path = os.path.join(ROOT_DIR, "frontend")
+if os.path.exists(frontend_path):
+    app.mount("/", StaticFiles(directory=frontend_path, html=True), name="frontend")
+
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8002)
+    uvicorn.run(app, host="127.0.0.1", port=8002)

@@ -208,10 +208,12 @@ class ChatRenderer {
 
         let mediaHTML = '';
         for (const url of urls) {
+            const safeUrl = this.escapeHtml(url);
+            const downloadBtn = `<button class="media-download-btn" onclick="event.stopPropagation(); downloadMedia('${safeUrl}')" title="下载"><i class="fas fa-download"></i></button>`;
             if (mediaType === 'image') {
-                mediaHTML += `<div class="media-content"><img src="${this.escapeHtml(url)}" alt="Generated Image" loading="lazy" onerror="this.parentElement.innerHTML='<p>图片加载失败</p>'"></div>`;
+                mediaHTML += `<div class="media-content">${downloadBtn}<img src="${safeUrl}" alt="Generated Image" loading="lazy" onerror="this.parentElement.innerHTML='<p>图片加载失败</p>'"></div>`;
             } else if (mediaType === 'video') {
-                mediaHTML += `<div class="media-content"><video src="${this.escapeHtml(url)}" controls preload="metadata" onerror="this.parentElement.innerHTML='<p>视频加载失败</p>'"></video></div>`;
+                mediaHTML += `<div class="media-content">${downloadBtn}<video src="${safeUrl}" controls preload="metadata" onerror="this.parentElement.innerHTML='<p>视频加载失败</p>'"></video></div>`;
             }
         }
 
@@ -1178,10 +1180,11 @@ document.addEventListener('DOMContentLoaded', () => {
             // Build media HTML if available
             let mediaHTML = '';
             if (session.mediaUrl) {
+                const safeMediaUrl = escapeHtml(session.mediaUrl);
                 if (session.mediaType === 'image') {
-                    mediaHTML = `<div class="timeline-card-media"><img src="${escapeHtml(session.mediaUrl)}" alt="output" onerror="this.outerHTML='<div class=\\'expired-media\\'>图片已过期</div>'"></div>`;
+                    mediaHTML = `<div class="timeline-card-media"><img src="${safeMediaUrl}" alt="output" onerror="this.outerHTML='<div class=\\'expired-media\\'>图片已过期</div>'"></div>`;
                 } else if (session.mediaType === 'video') {
-                    mediaHTML = `<div class="timeline-card-media"><video src="${escapeHtml(session.mediaUrl)}" controls onerror="this.outerHTML='<div class=\\'expired-media\\'>视频已过期</div>'"></video></div>`;
+                    mediaHTML = `<div class="timeline-card-media"><video src="${safeMediaUrl}" controls onerror="this.outerHTML='<div class=\\'expired-media\\'>视频已过期</div>'"></video></div>`;
                 }
             }
 
@@ -1239,6 +1242,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         <button class="timeline-action-btn" onclick="navigator.clipboard.writeText('${escapeHtml(session.input).replace(/'/g, "\\''")}')">
                             <i class="fas fa-copy"></i> 复制输入
                         </button>
+                        ${session.mediaUrl ? `<button class="timeline-action-btn" onclick="downloadMedia('${escapeHtml(session.mediaUrl)}')"><i class="fas fa-download"></i> 下载${session.mediaType === 'video' ? '视频' : '图片'}</button>` : ''}
                     </div>
                 </div>
             `;
@@ -1288,18 +1292,26 @@ document.addEventListener('DOMContentLoaded', () => {
                 const card = document.createElement('div');
                 card.className = 'asset-card';
 
+                const safeAssetUrl = escapeHtml(asset.mediaUrl);
                 if (asset.mediaType === 'image') {
                     card.innerHTML = `
-                        <img src="${escapeHtml(asset.mediaUrl)}" alt="asset" onerror="this.outerHTML='<div class=\\'expired-media\\'>已失效</div>'">
-                        <div class="asset-card-overlay">${escapeHtml(asset.input.substring(0, 40))}</div>
+                        <img src="${safeAssetUrl}" alt="asset" onerror="this.outerHTML='<div class=\\'expired-media\\'>已失效</div>'">
+                        <div class="asset-card-overlay">
+                            <span>${escapeHtml(asset.input.substring(0, 40))}</span>
+                            <button class="asset-download-btn" onclick="event.stopPropagation(); downloadMedia('${safeAssetUrl}')" title="下载图片"><i class="fas fa-download"></i></button>
+                        </div>
                     `;
                 } else if (asset.mediaType === 'video') {
                     card.innerHTML = `
-                        <video src="${escapeHtml(asset.mediaUrl)}" muted onerror="this.outerHTML='<div class=\\'expired-media\\'>已失效</div>'"></video>
+                        <video src="${safeAssetUrl}" muted onerror="this.outerHTML='<div class=\\'expired-media\\'>已失效</div>'"></video>
                         <div class="play-icon"><i class="fas fa-play"></i></div>
-                        <div class="asset-card-overlay">${escapeHtml(asset.input.substring(0, 40))}</div>
+                        <div class="asset-card-overlay">
+                            <span>${escapeHtml(asset.input.substring(0, 40))}</span>
+                            <button class="asset-download-btn" onclick="event.stopPropagation(); downloadMedia('${safeAssetUrl}')" title="下载视频"><i class="fas fa-download"></i></button>
+                        </div>
                     `;
-                    card.addEventListener('click', () => {
+                    card.addEventListener('click', (e) => {
+                        if (e.target.closest('.asset-download-btn')) return;
                         const video = card.querySelector('video');
                         if (video.paused) video.play(); else video.pause();
                     });
@@ -1329,6 +1341,29 @@ document.addEventListener('DOMContentLoaded', () => {
         div.textContent = text;
         return div.innerHTML;
     }
+
+    // ── Download Media ────────────────────────────────────────────────
+    // Exposed globally so inline onclick handlers can call it
+    window.downloadMedia = async function(url) {
+        try {
+            const resp = await fetch(url);
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const blob = await resp.blob();
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            // Extract filename from URL path
+            a.download = url.split('/').pop() || 'download';
+            document.body.appendChild(a);
+            a.click();
+            setTimeout(() => {
+                URL.revokeObjectURL(a.href);
+                a.remove();
+            }, 100);
+        } catch (e) {
+            console.error('[Download] Error:', e);
+            alert('下载失败: ' + e.message);
+        }
+    };
 
     // ── File Upload Handling ─────────────────────────────────────────────
     async function uploadFileToServer(file) {

@@ -125,8 +125,7 @@ do_status() {
         local http_code
         http_code=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:${MAIN_PORT}/" 2>/dev/null || echo "000")
         if [ "$http_code" = "200" ]; then
-            log_ok "Web API     — http://localhost:${MAIN_PORT}/ (HTTP $http_code)"
-            log_ok "Frontend    — http://localhost:${MAIN_PORT}/web/"
+            log_ok "Web API/UI  — http://localhost:${MAIN_PORT}/ (HTTP $http_code)"
         else
             log_warn "Web API     — http://localhost:${MAIN_PORT}/ (HTTP $http_code)"
         fi
@@ -196,8 +195,7 @@ do_start() {
 
     echo ""
     echo -e "${GREEN}=== 🎬 Comic Demo Ready ===${NC}"
-    echo -e "  API:      http://localhost:${MAIN_PORT}/"
-    echo -e "  Frontend: ${YELLOW}http://localhost:${MAIN_PORT}/web/${NC}"
+    echo -e "  API & UI: ${YELLOW}http://localhost:${MAIN_PORT}/${NC}"
     echo -e "  Logs:     tail -f $LOG_DIR/main.log"
     echo -e "  Stop:     ./start_dev.sh stop"
 }
