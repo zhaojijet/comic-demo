@@ -4,6 +4,7 @@ import json
 import asyncio
 import base64
 import mimetypes
+import threading
 import uvicorn
 from fastapi import (
     FastAPI,
@@ -12,6 +13,8 @@ from fastapi import (
     WebSocketDisconnect,
     UploadFile,
     File,
+    Request,
+    Response,
 )
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -44,6 +47,93 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ── Custom selective GZip + Cache middleware ──────────────────────────────
+# NOTE: We do NOT use the generic GZipMiddleware because it re-compresses
+# binary files (MP4, PNG, JPEG) and corrupts video streams / breaks range
+# requests. Instead, we only apply cache headers here and let the browser
+# handle already-compressed media natively.
+
+@app.middleware("http")
+async def add_cache_and_headers(request: Request, call_next):
+    response = await call_next(request)
+    path = request.url.path
+    if path.startswith("/outputs/"):
+        # Generated media files are immutable — cache for 30 days
+        response.headers["Cache-Control"] = "public, max-age=2592000, immutable"
+    return response
+
+
+# ── Thumbnail / Poster Generation ──────────────────────────────────────────
+THUMBS_DIR = os.path.join(ROOT_DIR, "outputs", "thumbs")
+os.makedirs(THUMBS_DIR, exist_ok=True)
+
+
+def generate_thumbnail(image_path: str, max_width: int = 400) -> str | None:
+    """Generate a JPEG thumbnail for an image. Returns the /outputs/thumbs/... URL."""
+    try:
+        from PIL import Image
+
+        basename = os.path.splitext(os.path.basename(image_path))[0]
+        thumb_filename = f"{basename}_thumb.jpg"
+        thumb_path = os.path.join(THUMBS_DIR, thumb_filename)
+
+        with Image.open(image_path) as img:
+            # Convert RGBA to RGB for JPEG
+            if img.mode in ("RGBA", "P"):
+                img = img.convert("RGB")
+            ratio = max_width / img.width
+            new_size = (max_width, int(img.height * ratio))
+            img = img.resize(new_size, Image.LANCZOS)
+            img.save(thumb_path, "JPEG", quality=80, optimize=True)
+
+        logger.info(f"[Thumbnail] Generated: {thumb_path}")
+        return f"/outputs/thumbs/{thumb_filename}"
+    except Exception as e:
+        logger.warning(f"[Thumbnail] Failed for {image_path}: {e}")
+        return None
+
+
+def generate_video_poster(video_path: str) -> str | None:
+    """Extract the first frame of a video as a JPEG poster image."""
+    try:
+        from moviepy.video.io.VideoFileClip import VideoFileClip
+        from PIL import Image
+        import numpy as np
+
+        basename = os.path.splitext(os.path.basename(video_path))[0]
+        poster_filename = f"{basename}_poster.jpg"
+        poster_path = os.path.join(THUMBS_DIR, poster_filename)
+
+        clip = VideoFileClip(video_path)
+        # Get frame at t=0.5s (or 0 if shorter)
+        t = min(0.5, clip.duration / 2) if clip.duration else 0
+        frame = clip.get_frame(t)
+        clip.close()
+
+        img = Image.fromarray(frame)
+        # Resize to max 640px wide for poster
+        if img.width > 640:
+            ratio = 640 / img.width
+            img = img.resize((640, int(img.height * ratio)), Image.LANCZOS)
+        img.save(poster_path, "JPEG", quality=80, optimize=True)
+
+        logger.info(f"[Poster] Generated: {poster_path}")
+        return f"/outputs/thumbs/{poster_filename}"
+    except Exception as e:
+        logger.warning(f"[Poster] Failed for {video_path}: {e}")
+        return None
+
+
+def _generate_thumb_async(func, path):
+    """Run thumbnail/poster generation in a background thread to avoid blocking."""
+    result = {"url": None}
+    def _run():
+        result["url"] = func(path)
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    t.join(timeout=15)  # 15s max wait
+    return result["url"]
 
 # Initialize settings and store
 CONFIG_PATH = os.path.join(ROOT_DIR, "config.toml")
@@ -469,6 +559,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     urls = await llm_client.generate_image(user_content)
                     if urls:
                         local_urls = []
+                        thumb_urls = []
                         for idx, img_url in enumerate(urls):
                             filename = f"gen_img_{int(asyncio.get_event_loop().time() * 1000)}_{idx}.png"
                             save_path = os.path.join(
@@ -476,6 +567,9 @@ async def websocket_endpoint(websocket: WebSocket):
                             )
                             await llm_client.download_media(img_url, save_path)
                             local_urls.append(f"/outputs/{filename}")
+                            # Generate thumbnail
+                            thumb_url = _generate_thumb_async(generate_thumbnail, save_path)
+                            thumb_urls.append(thumb_url)
 
                         params = {"model": model_name}
                         event = {
@@ -497,6 +591,7 @@ async def websocket_endpoint(websocket: WebSocket):
                                 "output": "图片生成完成",
                                 "mediaType": "image",
                                 "mediaUrl": local_urls[0] if local_urls else None,
+                                "thumbnailUrl": thumb_urls[0] if thumb_urls else None,
                                 "params": params,
                             }
                         )
@@ -662,6 +757,14 @@ async def websocket_endpoint(websocket: WebSocket):
                             )
                             local_url = None
 
+                    # Generate poster frame
+                    poster_url = None
+                    if local_url:
+                        poster_url = _generate_thumb_async(
+                            generate_video_poster,
+                            os.path.join(settings.project.outputs_dir, filename)
+                        )
+
                     params = {
                         "model": model_name,
                         "ratio": video_ratio,
@@ -677,6 +780,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         "result": "视频生成成功！",
                         "media_type": "video",
                         "media_urls": [local_url] if local_url else [],
+                        "poster_url": poster_url,
                         "params": params,
                     }
                     await session_manager.send_event(session_id, event)
@@ -689,6 +793,7 @@ async def websocket_endpoint(websocket: WebSocket):
                             "output": "视频生成完成",
                             "mediaType": "video",
                             "mediaUrl": local_url,
+                            "posterUrl": poster_url,
                             "params": params,
                         }
                     )

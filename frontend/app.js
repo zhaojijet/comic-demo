@@ -199,7 +199,7 @@ class ChatRenderer {
         return msg;
     }
 
-    addMediaMessage(mediaType, urls, params = null) {
+    addMediaMessage(mediaType, urls, params = null, posterUrl = null) {
         this.hideWelcome();
         const msg = document.createElement('div');
         msg.className = 'message agent';
@@ -211,9 +211,10 @@ class ChatRenderer {
             const safeUrl = this.escapeHtml(url);
             const downloadBtn = `<button class="media-download-btn" onclick="event.stopPropagation(); downloadMedia('${safeUrl}')" title="下载"><i class="fas fa-download"></i></button>`;
             if (mediaType === 'image') {
-                mediaHTML += `<div class="media-content">${downloadBtn}<img src="${safeUrl}" alt="Generated Image" loading="lazy" onerror="this.parentElement.innerHTML='<p>图片加载失败</p>'"></div>`;
+                mediaHTML += `<div class="media-content">${downloadBtn}<img src="${safeUrl}" alt="Generated Image" loading="lazy" decoding="async" onerror="this.parentElement.innerHTML='<p>图片加载失败</p>'"></div>`;
             } else if (mediaType === 'video') {
-                mediaHTML += `<div class="media-content">${downloadBtn}<video src="${safeUrl}" controls preload="metadata" onerror="this.parentElement.innerHTML='<p>视频加载失败</p>'"></video></div>`;
+                const posterAttr = posterUrl ? ` poster="${this.escapeHtml(posterUrl)}"` : '';
+                mediaHTML += `<div class="media-content">${downloadBtn}<video src="${safeUrl}" controls preload="metadata"${posterAttr} onerror="this.parentElement.innerHTML='<p>视频加载失败</p>'"></video></div>`;
             }
         }
 
@@ -982,7 +983,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 // Render media inline (images/videos)
                 if (event.media_type && event.media_urls && event.media_urls.length > 0) {
-                    renderer.addMediaMessage(event.media_type, event.media_urls, event.params);
+                    renderer.addMediaMessage(event.media_type, event.media_urls, event.params, event.poster_url || null);
                 }
 
                 // Save to session store
@@ -995,6 +996,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     output: event.result || event.content || '',
                     mediaType: event.media_type || null,
                     mediaUrl: (event.media_urls && event.media_urls.length > 0) ? event.media_urls[0] : null,
+                    thumbnailUrl: event.thumbnail_url || null,
+                    posterUrl: event.poster_url || null,
                     params: event.params || null,
                     refImages: refImagesForStore,
                 });
@@ -1182,9 +1185,11 @@ document.addEventListener('DOMContentLoaded', () => {
             if (session.mediaUrl) {
                 const safeMediaUrl = escapeHtml(session.mediaUrl);
                 if (session.mediaType === 'image') {
-                    mediaHTML = `<div class="timeline-card-media"><img src="${safeMediaUrl}" alt="output" onerror="this.outerHTML='<div class=\\'expired-media\\'>图片已过期</div>'"></div>`;
+                    const imgSrc = session.thumbnailUrl ? escapeHtml(session.thumbnailUrl) : safeMediaUrl;
+                    mediaHTML = `<div class="timeline-card-media"><img src="${imgSrc}" alt="output" loading="lazy" decoding="async" onerror="this.outerHTML='<div class=\\'expired-media\\'>图片已过期</div>'"></div>`;
                 } else if (session.mediaType === 'video') {
-                    mediaHTML = `<div class="timeline-card-media"><video src="${safeMediaUrl}" controls onerror="this.outerHTML='<div class=\\'expired-media\\'>视频已过期</div>'"></video></div>`;
+                    const posterAttr = session.posterUrl ? ` poster="${escapeHtml(session.posterUrl)}"` : '';
+                    mediaHTML = `<div class="timeline-card-media"><video src="${safeMediaUrl}" controls preload="none"${posterAttr} onerror="this.outerHTML='<div class=\\'expired-media\\'>视频已过期</div>'"></video></div>`;
                 }
             }
 
@@ -1294,16 +1299,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 const safeAssetUrl = escapeHtml(asset.mediaUrl);
                 if (asset.mediaType === 'image') {
+                    const imgSrc = asset.thumbnailUrl ? escapeHtml(asset.thumbnailUrl) : safeAssetUrl;
                     card.innerHTML = `
-                        <img src="${safeAssetUrl}" alt="asset" onerror="this.outerHTML='<div class=\\'expired-media\\'>已失效</div>'">
+                        <img src="${imgSrc}" data-full="${safeAssetUrl}" alt="asset" loading="lazy" decoding="async" onerror="this.outerHTML='<div class=\\'expired-media\\'>已失效</div>'">
                         <div class="asset-card-overlay">
                             <span>${escapeHtml(asset.input.substring(0, 40))}</span>
                             <button class="asset-download-btn" onclick="event.stopPropagation(); downloadMedia('${safeAssetUrl}')" title="下载图片"><i class="fas fa-download"></i></button>
                         </div>
                     `;
                 } else if (asset.mediaType === 'video') {
+                    const posterAttr = asset.posterUrl ? ` poster="${escapeHtml(asset.posterUrl)}"` : '';
                     card.innerHTML = `
-                        <video src="${safeAssetUrl}" muted onerror="this.outerHTML='<div class=\\'expired-media\\'>已失效</div>'"></video>
+                        <video src="${safeAssetUrl}" muted preload="none"${posterAttr} onerror="this.outerHTML='<div class=\\'expired-media\\'>已失效</div>'"></video>
                         <div class="play-icon"><i class="fas fa-play"></i></div>
                         <div class="asset-card-overlay">
                             <span>${escapeHtml(asset.input.substring(0, 40))}</span>
@@ -1444,7 +1451,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const img = imgContainer.querySelector('img');
         if (img && lightboxModal && lightboxImg) {
-            lightboxImg.src = img.src;
+            // Use data-full (original) if available, otherwise use src (may be thumbnail)
+            lightboxImg.src = img.dataset.full || img.src;
             lightboxModal.classList.add('open');
         }
     });
